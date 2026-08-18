@@ -17,7 +17,7 @@ from embedding.embedder import query_documents
 load_dotenv()
 
 llm = ChatGoogleGenerativeAI(
-    model="gemini-3.5-flash",
+    model="gemini-3.1-flash-lite",
     api_key=os.getenv("GEMINI_API_KEY"),
 )
 

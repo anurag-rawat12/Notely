@@ -14,6 +14,8 @@ export async function GET(request: NextRequest, context: Context) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
+        const auth0ID = session.user.sub.includes("|") ? session.user.sub.split("|")[1] : session.user.sub;
+
         const { courseId } = await context.params;
         if (!courseId || typeof courseId !== "string") {
             return NextResponse.json({ error: "Invalid courseId" }, { status: 400 });
@@ -27,7 +29,7 @@ export async function GET(request: NextRequest, context: Context) {
             return NextResponse.json({ error: "Course not found" }, { status: 404 });
         }
 
-        const isOwner = course.userId === session.user.sub;
+        const isOwner = course.userId === auth0ID;
         const isCollaborator = Boolean(session.user.email && course.collaborators?.includes(session.user.email));
         if (!isOwner && !isCollaborator) {
             return NextResponse.json({ error: "Access denied" }, { status: 403 });
@@ -46,6 +48,8 @@ export async function POST(request: NextRequest, context: Context) {
         if (!session?.user) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
+
+        const auth0ID = session.user.sub.includes("|") ? session.user.sub.split("|")[1] : session.user.sub;
 
         const { courseId } = await context.params;
         if (!courseId || typeof courseId !== "string") {
@@ -67,7 +71,7 @@ export async function POST(request: NextRequest, context: Context) {
             return NextResponse.json({ error: "Course not found" }, { status: 404 });
         }
 
-        if (course.userId !== session.user.sub) {
+        if (course.userId !== auth0ID) {
             return NextResponse.json({ error: "Only the course owner can invite collaborators." }, { status: 403 });
         }
 
@@ -95,6 +99,8 @@ export async function DELETE(request: NextRequest, context: Context) {
             return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
         }
 
+        const auth0ID = session.user.sub.includes("|") ? session.user.sub.split("|")[1] : session.user.sub;
+
         const { courseId } = await context.params;
         if (!courseId || typeof courseId !== "string") {
             return NextResponse.json({ error: "Invalid courseId" }, { status: 400 });
@@ -115,7 +121,7 @@ export async function DELETE(request: NextRequest, context: Context) {
             return NextResponse.json({ error: "Course not found" }, { status: 404 });
         }
 
-        if (course.userId !== session.user.sub) {
+        if (course.userId !== auth0ID) {
             return NextResponse.json({ error: "Only the course owner can remove collaborators." }, { status: 403 });
         }
 

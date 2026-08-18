@@ -38,7 +38,7 @@ export default async function CoursePage({ params }: { params: Promise<{ courseI
     // Query for courses owned by user OR shared with user as collaborator
     const accessQuery = {
         $or: [
-            { userId: session.user.sub },
+            { userId: auth0ID },
             ...(userEmail ? [{ collaborators: userEmail }] : []),
         ],
     };
@@ -59,7 +59,7 @@ export default async function CoursePage({ params }: { params: Promise<{ courseI
         id: item._id.toString(),
         name: item.name,
         pinned: item.pinned,
-        isCollaborator: item.userId !== session.user.sub,
+        isCollaborator: item.userId !== auth0ID,
         updatedAt: item.chat?.updatedAt ?? item.createdAt,
         messageCount: item.chat?.messages?.length ?? 0,
     }));
@@ -68,7 +68,7 @@ export default async function CoursePage({ params }: { params: Promise<{ courseI
         <div className="flex h-screen bg-background text-foreground overflow-hidden">
             <CourseSidebar
                 courses={sidebarCourses}
-                userId={session.user.sub}
+                userId={auth0ID}
                 dbUser={dbUser}
             />
             <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -82,7 +82,7 @@ export default async function CoursePage({ params }: { params: Promise<{ courseI
                     <ChatHistory
                         initialMessages={(course.chat?.messages as any) ?? []}
                         courseId={courseId}
-                        userId={session.user.sub}
+                        userId={auth0ID}
                     />
                 </div>
             </main>

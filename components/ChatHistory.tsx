@@ -244,6 +244,7 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
             const response = await axios.post("/api/chat", formData, {
                 headers: { "Content-Type": "multipart/form-data" }
             });
+
             if (response.data.message) {
                 setMessages((previous) => [...previous, response.data.message]);
             }
@@ -361,8 +362,8 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
                 </div>
             </div>
 
-            {/* Fixed Composer Bottom Bar */}
-            <div className="bg-background/90 px-4 pb-5 pt-3 backdrop-blur-sm sm:px-8">
+            {/* Fixed Composer Bottom Bar — now a sibling of the scroll area, not nested inside it */}
+            <div className="bg-background/90 px-4 pb-2 pt-3 backdrop-blur-sm sm:px-8">
                 <div className="mx-auto max-w-3xl">
                     {error && (
                         <p className="mb-2.5 rounded-lg border border-destructive/20 bg-destructive/10 px-3.5 py-2 text-xs font-medium text-destructive">
@@ -370,7 +371,7 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
                         </p>
                     )}
                     <Composer onSend={handleSend} />
-                    <p className="mt-2 text-center text-[11px] text-muted-foreground">
+                    <p className="mt-1 text-center text-[11px] text-muted-foreground">
                         Notely can make mistakes. Verify important information.
                     </p>
                 </div>

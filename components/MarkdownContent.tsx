@@ -8,7 +8,7 @@ function normalizeNewlines(text: string) {
 
 function InlineMarkdown({ text }: { text: string }) {
     const parts = text.split(
-        /(`[^`\n]+`|\*\*\*[^*\n]+\*\*\*|\*\*[^*\n]+\*\*|\*[^*\n]+\*|\$[^$\n]+\$|\[[^\]\n]+\]\([^)]+\))/g
+        /(`[^`\n]+`|\*\*\*[^*\n]+\*\*\*|\*\*[^*\n]+\*\*|\*[^*\n]+\*|~~[^~\n]+~~|\$[^$\n]+\$|\[[^\]\n]+\]\([^)]+\))/g
     );
 
     return (
@@ -21,7 +21,7 @@ function InlineMarkdown({ text }: { text: string }) {
                     return (
                         <code
                             key={index}
-                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground"
+                            className="rounded-md border border-border bg-muted px-1.5 py-0.5 font-mono text-[0.85em] text-foreground"
                         >
                             {part.slice(1, -1)}
                         </code>
@@ -40,10 +40,7 @@ function InlineMarkdown({ text }: { text: string }) {
                 // Bold
                 if (part.startsWith("**") && part.endsWith("**")) {
                     return (
-                        <strong
-                            key={index}
-                            className="font-semibold text-foreground"
-                        >
+                        <strong key={index} className="font-semibold text-foreground">
                             {part.slice(2, -2)}
                         </strong>
                     );
@@ -54,13 +51,19 @@ function InlineMarkdown({ text }: { text: string }) {
                     return <em key={index}>{part.slice(1, -1)}</em>;
                 }
 
+                // Strikethrough
+                if (part.startsWith("~~") && part.endsWith("~~")) {
+                    return (
+                        <del key={index} className="text-muted-foreground">
+                            {part.slice(2, -2)}
+                        </del>
+                    );
+                }
+
                 // Simple inline math
                 if (part.startsWith("$") && part.endsWith("$")) {
                     return (
-                        <span
-                            key={index}
-                            className="font-mono text-foreground"
-                        >
+                        <span key={index} className="font-mono text-foreground">
                             {part.slice(1, -1)}
                         </span>
                     );
@@ -78,10 +81,10 @@ function InlineMarkdown({ text }: { text: string }) {
                             href={href}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-foreground underline underline-offset-2 hover:text-muted-foreground"
+                            className="font-medium text-foreground underline underline-offset-2 hover:text-muted-foreground"
                         >
                             {label}
-                        </a>
+                        </a >
                     );
                 }
 
@@ -90,6 +93,76 @@ function InlineMarkdown({ text }: { text: string }) {
         </>
     );
 }
+
+/** Renders a fenced code block with a language label header, mimicking a syntax-highlighted panel. */
+function CodeBlock({ language, code }: { language: string; code: string }) {
+    return (
+        <div className="my-4 overflow-hidden rounded-xl border border-border shadow-sm">
+            <div className="flex items-center justify-between border-b border-border/60 bg-muted/50 px-4 py-1.5">
+                <span className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                    {language || "text"}
+                </span>
+            </div>
+            <pre className="overflow-x-auto bg-primary p-4 text-sm leading-6 text-primary-foreground">
+                <code data-language={language || undefined}>{code}</code>
+            </pre>
+        </div>
+    );
+}
+
+/** Parses and renders a GitHub-flavored-markdown pipe table. */
+function Table({ rows }: { rows: string[] }) {
+    // rows[0] = header, rows[1] = separator (---|---), rows[2+] = body
+    const parseRow = (row: string) =>
+        row
+            .trim()
+            .replace(/^\|/, "")
+            .replace(/\|$/, "")
+            .split("|")
+            .map((cell) => cell.trim());
+
+    const header = parseRow(rows[0]);
+    const body = rows.slice(2).map(parseRow);
+
+    return (
+        <div className="my-4 overflow-x-auto rounded-xl border border-border">
+            <table className="w-full border-collapse text-sm">
+                <thead>
+                    <tr className="bg-muted/60">
+                        {header.map((cell, i) => (
+                            <th
+                                key={i}
+                                className="border-b border-border px-3 py-2 text-left font-semibold text-foreground"
+                            >
+                                <InlineMarkdown text={cell} />
+                            </th>
+                        ))}
+                    </tr>
+                </thead>
+                <tbody>
+                    {body.map((row, rowIndex) => (
+                        <tr
+                            key={rowIndex}
+                            className={rowIndex % 2 === 1 ? "bg-muted/20" : undefined}
+                        >
+                            {row.map((cell, cellIndex) => (
+                                <td
+                                    key={cellIndex}
+                                    className="border-b border-border/60 px-3 py-2 text-foreground"
+                                >
+                                    <InlineMarkdown text={cell} />
+                                </td>
+                            ))}
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+const TABLE_ROW_RE = /^\s*\|.*\|\s*$/;
+const TABLE_SEPARATOR_RE = /^\s*\|?(\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/;
 
 /**
  * A small, safe Markdown renderer for assistant text.
@@ -133,7 +206,6 @@ export default function MarkdownContent({
                 index += 1;
             }
 
-            // Skip closing ```
             if (
                 index < lines.length &&
                 lines[index].trimStart().startsWith("```")
@@ -142,16 +214,28 @@ export default function MarkdownContent({
             }
 
             blocks.push(
-                <pre
-                    key={`code-${startIndex}`}
-                    className="my-4 overflow-x-auto rounded-xl bg-primary p-4 text-sm leading-6 text-primary-foreground"
-                >
-                    <code data-language={language || undefined}>
-                        {code.join("\n")}
-                    </code>
-                </pre>
+                <CodeBlock key={`code-${startIndex}`} language={language} code={code.join("\n")} />
             );
 
+            continue;
+        }
+
+        // Table (header row + separator row)
+        if (
+            TABLE_ROW_RE.test(line) &&
+            index + 1 < lines.length &&
+            TABLE_SEPARATOR_RE.test(lines[index + 1])
+        ) {
+            const startIndex = index;
+            const tableRows: string[] = [line, lines[index + 1]];
+            index += 2;
+
+            while (index < lines.length && TABLE_ROW_RE.test(lines[index])) {
+                tableRows.push(lines[index]);
+                index += 1;
+            }
+
+            blocks.push(<Table key={`table-${startIndex}`} rows={tableRows} />);
             continue;
         }
 
@@ -180,10 +264,7 @@ export default function MarkdownContent({
                 | "h6";
 
             blocks.push(
-                <HeadingTag
-                    key={`h-${index}`}
-                    className={styles}
-                >
+                <HeadingTag key={`h-${index}`} className={styles}>
                     <InlineMarkdown text={text} />
                 </HeadingTag>
             );
@@ -197,20 +278,15 @@ export default function MarkdownContent({
             const startIndex = index;
             const items: string[] = [];
 
-            while (
-                index < lines.length &&
-                /^\s*[-*+]\s+/.test(lines[index])
-            ) {
-                items.push(
-                    lines[index].replace(/^\s*[-*+]\s+/, "")
-                );
+            while (index < lines.length && /^\s*[-*+]\s+/.test(lines[index])) {
+                items.push(lines[index].replace(/^\s*[-*+]\s+/, ""));
                 index += 1;
             }
 
             blocks.push(
                 <ul
                     key={`ul-${startIndex}`}
-                    className="my-3 list-disc space-y-1 pl-5 text-foreground"
+                    className="my-3 list-disc space-y-1.5 pl-5 text-foreground marker:text-muted-foreground"
                 >
                     {items.map((item, itemIndex) => (
                         <li key={itemIndex}>
@@ -228,20 +304,15 @@ export default function MarkdownContent({
             const startIndex = index;
             const items: string[] = [];
 
-            while (
-                index < lines.length &&
-                /^\s*\d+\.\s+/.test(lines[index])
-            ) {
-                items.push(
-                    lines[index].replace(/^\s*\d+\.\s+/, "")
-                );
+            while (index < lines.length && /^\s*\d+\.\s+/.test(lines[index])) {
+                items.push(lines[index].replace(/^\s*\d+\.\s+/, ""));
                 index += 1;
             }
 
             blocks.push(
                 <ol
                     key={`ol-${startIndex}`}
-                    className="my-3 list-decimal space-y-1 pl-5 text-foreground"
+                    className="my-3 list-decimal space-y-1.5 pl-5 text-foreground marker:text-muted-foreground marker:font-medium"
                 >
                     {items.map((item, itemIndex) => (
                         <li key={itemIndex}>
@@ -259,20 +330,15 @@ export default function MarkdownContent({
             const startIndex = index;
             const quoteLines: string[] = [];
 
-            while (
-                index < lines.length &&
-                /^\s*>\s?/.test(lines[index])
-            ) {
-                quoteLines.push(
-                    lines[index].replace(/^\s*>\s?/, "")
-                );
+            while (index < lines.length && /^\s*>\s?/.test(lines[index])) {
+                quoteLines.push(lines[index].replace(/^\s*>\s?/, ""));
                 index += 1;
             }
 
             blocks.push(
                 <blockquote
                     key={`bq-${startIndex}`}
-                    className="my-3 border-l-2 border-border pl-4 text-muted-foreground"
+                    className="my-3 rounded-r-lg border-l-2 border-primary/40 bg-muted/30 py-2 pl-4 pr-3 text-muted-foreground"
                 >
                     {quoteLines.map((quoteLine, quoteIndex) => (
                         <div key={quoteIndex}>
@@ -287,19 +353,12 @@ export default function MarkdownContent({
 
         // Horizontal rule
         if (/^\s*(---+|\*\*\*+|___+)\s*$/.test(line)) {
-            blocks.push(
-                <hr
-                    key={`hr-${index}`}
-                    className="my-5 border-border"
-                />
-            );
-
+            blocks.push(<hr key={`hr-${index}`} className="my-5 border-border" />);
             index += 1;
             continue;
         }
 
         // Normal paragraph.
-        // Join consecutive normal lines into one paragraph.
         const paragraphLines: string[] = [];
         const startIndex = index;
 
@@ -311,17 +370,15 @@ export default function MarkdownContent({
             !/^\s*[-*+]\s+/.test(lines[index]) &&
             !/^\s*\d+\.\s+/.test(lines[index]) &&
             !/^\s*>\s?/.test(lines[index]) &&
-            !/^\s*(---+|\*\*\*+|___+)\s*$/.test(lines[index])
+            !/^\s*(---+|\*\*\*+|___+)\s*$/.test(lines[index]) &&
+            !(TABLE_ROW_RE.test(lines[index]) && index + 1 < lines.length && TABLE_SEPARATOR_RE.test(lines[index + 1]))
         ) {
             paragraphLines.push(lines[index].trim());
             index += 1;
         }
 
         blocks.push(
-            <p
-                key={`p-${startIndex}`}
-                className="my-3 leading-relaxed text-foreground"
-            >
+            <p key={`p-${startIndex}`} className="my-3 leading-relaxed text-foreground">
                 {paragraphLines.map((paragraphLine, paragraphIndex) => (
                     <Fragment key={paragraphIndex}>
                         {paragraphIndex > 0 && <br />}
@@ -332,9 +389,5 @@ export default function MarkdownContent({
         );
     }
 
-    return (
-        <div className="text-[15px] text-foreground">
-            {blocks}
-        </div>
-    );
+    return <div className="text-[15px] text-foreground">{blocks}</div>;
 }

@@ -38,7 +38,7 @@ export default async function DashboardPage() {
     const client = await clientPromise;
     const accessQuery = {
         $or: [
-            { userId: session.user.sub },
+            { userId: auth0ID },
             ...(userEmail ? [{ collaborators: userEmail }] : []),
         ],
     };
@@ -58,7 +58,7 @@ export default async function DashboardPage() {
         id: course._id.toString(),
         name: course.name,
         pinned: course.pinned,
-        isCollaborator: course.userId !== session.user.sub,
+        isCollaborator: course.userId !== auth0ID,
         updatedAt: course.chat?.updatedAt ?? course.createdAt,
         messageCount: course.chat?.messages?.length ?? 0,
     }));
@@ -68,7 +68,7 @@ export default async function DashboardPage() {
             {/* Sidebar */}
             <CourseSidebar
                 courses={sidebarCourses}
-                userId={session.user.sub}
+                userId={auth0ID}
                 dbUser={dbUser}
             />
 
@@ -107,7 +107,7 @@ export default async function DashboardPage() {
 
                     {/* Composer Box */}
                     <div className="w-full">
-                        <DashboardClient userId={session.user.sub} />
+                        <DashboardClient userId={auth0ID} />
                     </div>
 
                     {/* Recent Courses Section */}
@@ -136,7 +136,7 @@ export default async function DashboardPage() {
                         ) : (
                             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                                 {courses.slice(0, 6).map((course) => {
-                                    const isCollaborator = course.userId !== session.user.sub;
+                                    const isCollaborator = course.userId !== auth0ID;
                                     const msgCount = course.chat?.messages?.length ?? 0;
 
                                     return (

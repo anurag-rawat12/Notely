@@ -20,7 +20,7 @@ export default async function CourseLibraryPage() {
 
     const client = await clientPromise;
     const courses = (await client.db().collection("courses")
-        .find({ userId: session.user.sub })
+        .find({ userId: session.user.sub.split("|")[1] })
         .sort({ "chat.updatedAt": -1, createdAt: -1 })
         .toArray()) as unknown as CourseListItem[];
 

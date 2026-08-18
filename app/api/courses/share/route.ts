@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Only owner or collaborator can generate/view share link
-        const isOwner = course.userId === session.user.sub;
+        const isOwner = course.userId === session.user.sub.split("|")[1];
         const isCollaborator = Boolean(session.user.email && course.collaborators?.includes(session.user.email));
         if (!isOwner && !isCollaborator) {
             return NextResponse.json({ error: "Access denied" }, { status: 403 });

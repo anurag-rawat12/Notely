@@ -53,7 +53,7 @@ export default function CourseSidebar({
     userId,
     dbUser,
 }: CourseSidebarProps) {
-    const [collapsed, setCollapsed] = useState(false);
+    const [collapsed, setCollapsed] = useState(true);
     const [activeTab, setActiveTab] = useState<TabFilter>("all");
     const [searchQuery, setSearchQuery] = useState("");
     const [editing, setEditing] = useState<SidebarCourse | null>(null);
