@@ -3,6 +3,8 @@ import clientPromise from "@/lib/mongodb";
 import { auth0 } from "@/lib/auth0";
 import { getCourseIdQuery } from "@/lib/server-utils";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
     try {
         const session = await auth0.getSession();

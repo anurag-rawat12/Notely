@@ -5,6 +5,8 @@ import { chatQueue } from "@/server/Queue";
 import { auth0 } from "@/lib/auth0";
 import type { ChatJobPayload } from "@/lib/Types";
 
+export const dynamic = "force-dynamic";
+
 type Mode = "chat" | "ask" | "flashcards";
 
 type CourseDocument = {

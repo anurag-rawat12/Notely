@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { getCourseIdQuery } from "@/lib/server-utils";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: NextRequest) {
     try {
         const { userId, name, courseId, projectId, initialMessage, mode } = await request.json();

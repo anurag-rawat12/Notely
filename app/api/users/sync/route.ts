@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(request: Request) {
     try {
         const { auth0Id, email, name, picture } = await request.json();

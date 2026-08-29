@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 
+export const dynamic = "force-dynamic";
 
 type Context = {
     params: Promise<{ auth0Id: string }>;
@@ -71,4 +72,3 @@ export async function PATCH(request: NextRequest, context: Context) {
         );
     }
 }
-

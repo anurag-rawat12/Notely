@@ -6,6 +6,8 @@ import { libertinus } from "@/lib/fonts";
 import { Globe, BookOpen } from "lucide-react";
 import type { ChatMessage, Flashcard } from "@/lib/Types";
 
+export const dynamic = "force-dynamic";
+
 type CourseDoc = {
     _id: unknown;
     name: string;

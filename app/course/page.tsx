@@ -6,6 +6,8 @@ import { notFound } from "next/navigation";
 import { libertinus } from "@/lib/fonts";
 import { ThemeToggleDropdown } from "@/components/ThemeToggle";
 
+export const dynamic = "force-dynamic";
+
 type CourseListItem = {
     _id: { toString(): string };
     userId: string;

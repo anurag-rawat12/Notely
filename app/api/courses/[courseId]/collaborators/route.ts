@@ -3,6 +3,8 @@ import clientPromise from "@/lib/mongodb";
 import { auth0 } from "@/lib/auth0";
 import { getCourseIdQuery } from "@/lib/server-utils";
 
+export const dynamic = "force-dynamic";
+
 type Context = {
     params: Promise<{ courseId: string }>;
 };
