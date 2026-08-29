@@ -12,6 +12,8 @@ import CourseSidebar, { SidebarCourse, SidebarProject } from "@/components/Cours
 import Link from "next/link";
 import { BookOpen, Clock, Users, ArrowUpRight, Sparkles, FolderOpen } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 type CourseDoc = {
     _id: { toString(): string };
     name: string;

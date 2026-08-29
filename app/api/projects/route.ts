@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { auth0 } from "@/lib/auth0";
 
+export const dynamic = "force-dynamic";
+
 // GET /api/projects — list all projects for authenticated user
 export async function GET() {
     try {

@@ -8,6 +8,8 @@ import { getUser } from "@/lib/helper";
 import { DbUser } from "@/lib/Types";
 import { getCourseIdQuery } from "@/lib/server-utils";
 
+export const dynamic = "force-dynamic";
+
 type CourseDoc = {
     _id: { toString(): string };
     name: string;

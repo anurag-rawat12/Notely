@@ -12,6 +12,8 @@ import { libertinus } from "@/lib/fonts";
 import Link from "next/link";
 import { FolderOpen, MessageSquare, Clock, ArrowUpRight, Plus, Sparkles } from "lucide-react";
 
+export const dynamic = "force-dynamic";
+
 type ProjectDoc = {
     _id: { toString(): string };
     name: string;

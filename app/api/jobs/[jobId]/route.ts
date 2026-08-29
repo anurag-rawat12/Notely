@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { chatQueue } from "@/server/Queue";
 
-type Context = { params: Promise<{ jobId: string }> };
+export const dynamic = "force-dynamic";
 
-const POLL_INTERVAL_MS = 800;
+type Context = { params: Promise<{ jobId: string }> };
 
 export async function GET(_req: NextRequest, context: Context) {
     try {

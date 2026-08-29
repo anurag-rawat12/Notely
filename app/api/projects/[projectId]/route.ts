@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
 import { auth0 } from "@/lib/auth0";
 
+export const dynamic = "force-dynamic";
+
 type Context = { params: Promise<{ projectId: string }> };
 
 function userId(session: { user: { sub: string } }) {
