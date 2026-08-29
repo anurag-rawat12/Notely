@@ -23,6 +23,8 @@ dotenv.config({ path: ".env.local" });
 const REDIS_URL = process.env.REDIS_URL as string;
 const MONGODB_URI = process.env.MONGODB_URI as string;
 const FASTAPI_URL = process.env.FASTAPI_URL ?? "http://localhost:8000";
+const QDRANT_ENDPOINT = process.env.QDRANT_ENDPOINT ?? process.env.QDRANT_URL;
+const WORKER_URL = process.env.WORKER_URL ?? process.env.RENDER_EXTERNAL_URL;
 
 const connection = new Redis(REDIS_URL, {
     maxRetriesPerRequest: null,
@@ -207,14 +209,71 @@ process.on("SIGINT", async () => {
     process.exit(0);
 });
 
-// ─── HTTP Health Server (Allows deployment on Render/Railway/Free Tier) ────
+// ─── HTTP Health Server ───────────────────────────────────────────────────
 const PORT = process.env.PORT || 4000;
 const server = http.createServer((req, res) => {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ status: "ok", service: "notely-bullmq-worker" }));
+    if (req.url === "/ping" || req.url === "/health" || req.url === "/") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(
+            JSON.stringify({
+                status: "ok",
+                service: "notely-bullmq-worker",
+                timestamp: new Date().toISOString(),
+            })
+        );
+        return;
+    }
+    res.writeHead(404, { "Content-Type": "text/plain" });
+    res.end("Not Found");
 });
 
 server.listen(PORT, () => {
     console.log(`🚀 BullMQ Worker health check server listening on port ${PORT}`);
     console.log("🚀 Notely Workers active — listening on: chat-generation | document-processing");
 });
+
+// ─── Auto Keep-Alive Pinger (Prevents Render / Qdrant Free Tier Sleeping) ──
+const PING_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
+
+async function pingServices() {
+    const timestamp = new Date().toISOString();
+    console.log(`[keep-alive] 🔄 Running keep-alive ping at ${timestamp}...`);
+
+    // 1. Ping FastAPI
+    if (FASTAPI_URL && !FASTAPI_URL.includes("localhost")) {
+        try {
+            const res = await fetch(`${FASTAPI_URL}/ping`);
+            console.log(`[keep-alive] ✓ FastAPI ping response: ${res.status}`);
+        } catch (err: any) {
+            console.warn(`[keep-alive] ⚠️ FastAPI ping failed: ${err.message}`);
+        }
+    }
+
+    // 2. Ping Qdrant Cloud
+    if (QDRANT_ENDPOINT && !QDRANT_ENDPOINT.includes("localhost")) {
+        try {
+            const cleanUrl = QDRANT_ENDPOINT.replace(/\/$/, "");
+            const res = await fetch(`${cleanUrl}/healthz`);
+            console.log(`[keep-alive] ✓ Qdrant ping response: ${res.status}`);
+        } catch (err: any) {
+            console.warn(`[keep-alive] ⚠️ Qdrant ping failed: ${err.message}`);
+        }
+    }
+
+    // 3. Self-ping Worker (if URL provided)
+    if (WORKER_URL && !WORKER_URL.includes("localhost")) {
+        try {
+            const cleanUrl = WORKER_URL.replace(/\/$/, "");
+            const res = await fetch(`${cleanUrl}/ping`);
+            console.log(`[keep-alive] ✓ Worker self-ping response: ${res.status}`);
+        } catch (err: any) {
+            console.warn(`[keep-alive] ⚠️ Worker self-ping failed: ${err.message}`);
+        }
+    }
+}
+
+// Initial delay before first ping, then recurring every 10 minutes
+setTimeout(() => {
+    pingServices();
+    setInterval(pingServices, PING_INTERVAL_MS);
+}, 60 * 1000);
