@@ -7,6 +7,7 @@ import Composer, { ComposerSubmitPayload } from "@/components/Composer";
 
 interface DashboardPageProps {
     userId: string;
+    projectId?: string;
 }
 
 function createCourseTitle(message: string, filename?: string) {
@@ -17,7 +18,7 @@ function createCourseTitle(message: string, filename?: string) {
     return `${words.charAt(0).toUpperCase()}${words.slice(1)}`.slice(0, 60);
 }
 
-export default function DashboardClient({ userId }: DashboardPageProps) {
+export default function DashboardClient({ userId, projectId }: DashboardPageProps) {
     const router = useRouter();
     const [creating, setCreating] = useState(false);
 
@@ -30,10 +31,11 @@ export default function DashboardClient({ userId }: DashboardPageProps) {
             const title = createCourseTitle(message, files[0]?.name);
 
             // 2. Fast course initialization (<20ms insert) with the initial user message
-            await axios.post("/api/courses", { 
-                courseId, 
-                userId, 
+            await axios.post("/api/courses", {
+                courseId,
+                userId,
                 name: title,
+                projectId,
                 initialMessage: message,
                 mode
             });

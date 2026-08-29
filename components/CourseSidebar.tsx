@@ -1,35 +1,21 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import axios from "axios";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
-    Briefcase,
-    FolderKanban,
-    MoreHorizontal,
-    Palette,
-    PanelLeftClose,
-    PanelLeftOpen,
-    Pencil,
-    Pin,
-    Plus,
-    Search,
-    Trash2,
-    X,
+    ChevronRight, FolderOpen, Folder, MessageSquare, Pin, Plus,
+    Pencil, Trash2, Search, MoreHorizontal, X, PanelLeftClose,
+    PanelLeftOpen, Palette, Briefcase, Loader2, Users, AlertTriangle,
 } from "lucide-react";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { libertinus } from "@/lib/fonts";
 import { useTheme } from "next-themes";
 import { DbUser } from "@/lib/Types";
 import Profile from "./Profile";
+
+// ─── Types ────────────────────────────────────────────────────────────────
 
 export type SidebarCourse = {
     id: string;
@@ -38,747 +24,711 @@ export type SidebarCourse = {
     isCollaborator?: boolean;
     updatedAt?: Date | string;
     messageCount?: number;
+    projectId?: string;
 };
 
-type TabFilter = "all" | "pinned" | "shared";
+export type SidebarProject = {
+    id: string;
+    name: string;
+};
 
-type CourseSidebarProps = {
+interface CourseSidebarProps {
     courses: SidebarCourse[];
+    projects: SidebarProject[];
     userId: string;
     dbUser?: DbUser | null;
-};
+    activeProjectId?: string;
+}
 
-export default function CourseSidebar({
-    courses,
-    userId,
-    dbUser,
-}: CourseSidebarProps) {
-    const [collapsed, setCollapsed] = useState(true);
-    const [activeTab, setActiveTab] = useState<TabFilter>("all");
+type TabFilter = "chats" | "shared" | "all";
+
+// ─── Small helpers ────────────────────────────────────────────────────────
+
+function ChatItem({
+    course,
+    active,
+    onDelete,
+    onRename,
+    onPin,
+}: {
+    course: SidebarCourse;
+    active: boolean;
+    onDelete: (c: SidebarCourse) => void;
+    onRename: (c: SidebarCourse) => void;
+    onPin: (c: SidebarCourse) => void;
+}) {
+    const [menuOpen, setMenuOpen] = useState(false);
+
+    return (
+        <div
+            className={`group relative flex items-center rounded-lg transition-colors ${
+                active
+                    ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+            }`}
+        >
+            <Link
+                href={`/dashboard/${course.id}`}
+                className="min-w-0 flex-1 truncate px-2.5 py-2 text-xs"
+                title={course.name}
+            >
+                <div className="flex items-center justify-between gap-1">
+                    <span className="truncate">{course.name}</span>
+                    <div className="flex items-center gap-1 shrink-0">
+                        {course.isCollaborator && (
+                            <span title="Shared course">
+                                <Users className="h-3 w-3 text-muted-foreground/70" />
+                            </span>
+                        )}
+                        {course.pinned && <Pin className="h-2.5 w-2.5 fill-current opacity-60" />}
+                    </div>
+                </div>
+                {course.messageCount !== undefined && course.messageCount > 0 && (
+                    <span className="text-[10px] text-muted-foreground/60">{course.messageCount} msg</span>
+                )}
+            </Link>
+
+            <div className="relative mr-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100">
+                <button
+                    type="button"
+                    onClick={() => setMenuOpen((v) => !v)}
+                    className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-card hover:text-foreground"
+                >
+                    <MoreHorizontal className="h-3 w-3" />
+                </button>
+                {menuOpen && (
+                    <div className="absolute right-0 z-40 mt-1 w-36 rounded-xl border border-border bg-popover p-1 shadow-lg text-popover-foreground animate-in fade-in-0 zoom-in-95 duration-100">
+                        <button type="button" onClick={() => { onRename(course); setMenuOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-muted">
+                            <Pencil className="h-3 w-3" /> Rename
+                        </button>
+                        <button type="button" onClick={() => { onPin(course); setMenuOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs hover:bg-muted">
+                            <Pin className="h-3 w-3" /> {course.pinned ? "Unpin" : "Pin"}
+                        </button>
+                        <button type="button" onClick={() => { onDelete(course); setMenuOpen(false); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-destructive hover:bg-destructive/10">
+                            <Trash2 className="h-3 w-3" /> Delete
+                        </button>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
+// ─── Main Sidebar ─────────────────────────────────────────────────────────
+
+export default function CourseSidebar({ courses, projects: initialProjects, userId, dbUser, activeProjectId }: CourseSidebarProps) {
+    const [collapsed, setCollapsed] = useState(false);
+    const [activeTab, setActiveTab] = useState<TabFilter>("chats");
     const [searchQuery, setSearchQuery] = useState("");
-    const [editing, setEditing] = useState<SidebarCourse | null>(null);
-    const [name, setName] = useState("");
+    const [editingCourse, setEditingCourse] = useState<SidebarCourse | null>(null);
+    const [editName, setEditName] = useState("");
     const [saving, setSaving] = useState(false);
-    const [openMenu, setOpenMenu] = useState<string | null>(null);
 
+    // Deletion states & loading
     const [deletingCourse, setDeletingCourse] = useState<SidebarCourse | null>(null);
-    const [deleting, setDeleting] = useState(false);
+    const [deletingProject, setDeletingProject] = useState<SidebarProject | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
 
-    const [createModalOpen, setCreateModalOpen] = useState(false);
+    // Projects
+    const [projects, setProjects] = useState<SidebarProject[]>(initialProjects);
+    const [expandedProjects, setExpandedProjects] = useState<Set<string>>(
+        new Set(activeProjectId ? [activeProjectId] : [initialProjects[0]?.id].filter(Boolean))
+    );
+    const [createProjectOpen, setCreateProjectOpen] = useState(false);
     const [newProjectName, setNewProjectName] = useState("");
     const [creatingProject, setCreatingProject] = useState(false);
+    const [editingProject, setEditingProject] = useState<SidebarProject | null>(null);
+    const [editProjectName, setEditProjectName] = useState("");
+    const [projectMenuOpen, setProjectMenuOpen] = useState<string | null>(null);
 
     const pathname = usePathname();
     const router = useRouter();
-
     const { theme, setTheme } = useTheme();
 
-    // ------------------------------------------------------------
-    // Create a new chat
-    // ------------------------------------------------------------
+    // ── helpers ──────────────────────────────────────────────────────────
 
-    const handleInstantNewChat = async (customTitle?: string) => {
-        const uuid = crypto.randomUUID();
-        const title = customTitle?.trim() || "New conversation";
-
-        try {
-            await axios.post("/api/courses", {
-                courseId: uuid,
-                userId,
-                name: title,
-            });
-
-            router.push(`/dashboard/${uuid}`);
-        } catch (error) {
-            console.error("Failed to create new chat:", error);
-
-            // Fallback
-            router.push("/dashboard");
-        }
+    const toggleTheme = () => {
+        if (theme === "dark") setTheme("light");
+        else if (theme === "light") setTheme("system");
+        else setTheme("dark");
     };
 
-    // ------------------------------------------------------------
-    // Create project
-    // ------------------------------------------------------------
-
-    const handleCreateProjectSubmit = async (e: FormEvent<HTMLFormElement>) => {
-        e.preventDefault();
-
-        const trimmedName = newProjectName.trim();
-
-        if (!trimmedName || creatingProject) {
-            return;
-        }
-
-        setCreatingProject(true);
-
+    const instantNewChat = useCallback(async (projectId?: string) => {
+        const uuid = crypto.randomUUID();
         try {
-            await handleInstantNewChat(trimmedName);
+            await axios.post("/api/courses", { courseId: uuid, userId, name: "New conversation", projectId });
+            router.push(`/dashboard/${uuid}`);
+        } catch {
+            router.push("/dashboard");
+        }
+    }, [userId, router]);
 
+    const createProject = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!newProjectName.trim() || creatingProject) return;
+        setCreatingProject(true);
+        try {
+            const { data } = await axios.post("/api/projects", { name: newProjectName });
+            const newProj: SidebarProject = { id: data.projectId, name: newProjectName.trim() };
+            setProjects((prev) => [newProj, ...prev]);
+            setExpandedProjects((prev) => new Set([...prev, newProj.id]));
             setNewProjectName("");
-            setCreateModalOpen(false);
+            setCreateProjectOpen(false);
         } finally {
             setCreatingProject(false);
         }
     };
 
-    // ------------------------------------------------------------
-    // Theme
-    // ------------------------------------------------------------
-
-    const toggleTheme = () => {
-        if (theme === "dark") {
-            setTheme("light");
-        } else if (theme === "light") {
-            setTheme("system");
-        } else {
-            setTheme("dark");
-        }
-    };
-
-    // ------------------------------------------------------------
-    // Update course
-    // ------------------------------------------------------------
-
-    const updateCourse = async (
-        courseId: string,
-        updates: {
-            name?: string;
-            pinned?: boolean;
-        }
-    ) => {
+    const confirmDeleteProject = async () => {
+        if (!deletingProject) return;
+        setIsDeleting(true);
         try {
-            await axios.patch("/api/courses", {
-                courseId,
-                userId,
-                ...updates,
-            });
-
+            await axios.delete(`/api/projects/${deletingProject.id}`);
+            setProjects((prev) => prev.filter((p) => p.id !== deletingProject.id));
+            setDeletingProject(null);
             router.refresh();
-        } catch (error) {
-            console.error("Failed to update course:", error);
+        } finally {
+            setIsDeleting(false);
         }
     };
 
-    // ------------------------------------------------------------
-    // Save renamed course
-    // ------------------------------------------------------------
-
-    const saveName = async () => {
-        if (!editing || !name.trim() || saving) {
-            return;
-        }
-
-        setSaving(true);
-
+    const confirmDeleteCourse = async () => {
+        if (!deletingCourse) return;
+        setIsDeleting(true);
         try {
-            await updateCourse(editing.id, {
-                name: name.trim(),
-            });
+            await axios.delete(`/api/courses?course_id=${deletingCourse.id}&user_id=${encodeURIComponent(userId)}`);
+            if (pathname === `/dashboard/${deletingCourse.id}`) router.push("/dashboard");
+            setDeletingCourse(null);
+            router.refresh();
+        } finally {
+            setIsDeleting(false);
+        }
+    };
 
-            setEditing(null);
-            setName("");
-        } catch (error) {
-            console.error("Failed to rename course:", error);
+    const renameProject = async () => {
+        if (!editingProject || !editProjectName.trim()) return;
+        await axios.patch(`/api/projects/${editingProject.id}`, { name: editProjectName });
+        setProjects((prev) => prev.map((p) => p.id === editingProject.id ? { ...p, name: editProjectName.trim() } : p));
+        setEditingProject(null);
+        router.refresh();
+    };
+
+    const renameCourse = async () => {
+        if (!editingCourse || !editName.trim()) return;
+        setSaving(true);
+        try {
+            await axios.patch("/api/courses", { courseId: editingCourse.id, userId, name: editName });
+            setEditingCourse(null);
+            router.refresh();
         } finally {
             setSaving(false);
         }
     };
 
-    // ------------------------------------------------------------
-    // Delete course
-    // ------------------------------------------------------------
-
-    const confirmDeleteCourse = async () => {
-        if (!deletingCourse || deleting) {
-            return;
-        }
-
-        setDeleting(true);
-
-        try {
-            await axios.delete(
-                `/api/courses?course_id=${encodeURIComponent(
-                    deletingCourse.id
-                )}&user_id=${encodeURIComponent(userId)}`
-            );
-
-            setOpenMenu(null);
-
-            if (pathname === `/dashboard/${deletingCourse.id}`) {
-                router.push("/dashboard");
-            }
-
-            router.refresh();
-            setDeletingCourse(null);
-        } catch (error) {
-            console.error("Failed to delete course:", error);
-        } finally {
-            setDeleting(false);
-        }
+    const pinCourse = async (course: SidebarCourse) => {
+        await axios.patch("/api/courses", { courseId: course.id, userId, pinned: !course.pinned });
+        router.refresh();
     };
 
-    // ------------------------------------------------------------
-    // Filter courses
-    // ------------------------------------------------------------
-
-    const filteredCourses = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
-
-        return courses.filter((course) => {
-            // Search
-            if (
-                query &&
-                !course.name.toLowerCase().includes(query)
-            ) {
-                return false;
-            }
-
-            // Tabs
-            if (activeTab === "pinned") {
-                return Boolean(course.pinned);
-            }
-
-            if (activeTab === "shared") {
-                return Boolean(course.isCollaborator);
-            }
-
-            return true;
+    const toggleProject = (id: string) => {
+        setExpandedProjects((prev) => {
+            const s = new Set(prev);
+            if (s.has(id)) s.delete(id);
+            else s.add(id);
+            return s;
         });
-    }, [courses, activeTab, searchQuery]);
+    };
 
-    // ------------------------------------------------------------
-    // Render
-    // ------------------------------------------------------------
+    // ── Filtered lists ────────────────────────────────────────────────────
+
+    const q = searchQuery.toLowerCase();
+
+    // Project chats mapping
+    const projectChats = useMemo(() => {
+        const map: Record<string, SidebarCourse[]> = {};
+        projects.forEach((p) => { map[p.id] = []; });
+        courses.forEach((c) => {
+            if (c.projectId && map[c.projectId]) {
+                if (!q || c.name.toLowerCase().includes(q)) {
+                    if (activeTab === "shared" && !c.isCollaborator) return;
+                    map[c.projectId].push(c);
+                }
+            }
+        });
+        return map;
+    }, [courses, projects, q, activeTab]);
+
+    // Standalone / Quick chats
+    const quickChats = useMemo(() =>
+        courses.filter((c) => {
+            if (c.projectId) return false;
+            if (q && !c.name.toLowerCase().includes(q)) return false;
+            if (activeTab === "shared") return Boolean(c.isCollaborator);
+            return true;
+        }),
+        [courses, q, activeTab]
+    );
+
+    // Shared chats list (all shared courses regardless of project)
+    const sharedChats = useMemo(() =>
+        courses.filter((c) => c.isCollaborator && (!q || c.name.toLowerCase().includes(q))),
+        [courses, q]
+    );
+
+    // ─── Render ───────────────────────────────────────────────────────────
 
     return (
         <div className="flex h-full shrink-0 select-none">
-            {/* =====================================================
-                1. ICON RAIL
-            ====================================================== */}
-
+            {/* ── Icon Rail ──────────────────────────────────────────────── */}
             <div className="flex h-full w-14 flex-col items-center justify-between border-r border-border bg-sidebar py-3 text-sidebar-foreground">
-                {/* Top Section */}
-                <div className="flex flex-col items-center gap-3">
-                    {/* Collapse / Expand */}
+                <div className="flex flex-col items-center gap-2">
                     <button
                         type="button"
-                        onClick={() => setCollapsed((value) => !value)}
-                        className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                        title={
-                            collapsed
-                                ? "Expand sidebar"
-                                : "Collapse sidebar"
-                        }
+                        onClick={() => setCollapsed((v) => !v)}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+                        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
                     >
-                        {collapsed ? (
-                            <PanelLeftOpen className="h-4 w-4" />
-                        ) : (
-                            <PanelLeftClose className="h-4 w-4" />
-                        )}
+                        {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
                     </button>
 
-                    {/* New Chat */}
                     <button
                         type="button"
-                        onClick={() => handleInstantNewChat()}
-                        className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-all hover:scale-105 hover:border-primary/40 hover:bg-primary hover:text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        title="Create new conversation"
+                        onClick={() => instantNewChat()}
+                        className="flex h-9 w-9 items-center justify-center rounded-full border border-border bg-card text-foreground shadow-xs transition-all hover:scale-105 hover:bg-primary hover:text-primary-foreground hover:border-primary"
+                        title="New conversation"
                     >
                         <Plus className="h-4 w-4" />
                     </button>
 
                     <div className="my-1 h-px w-6 bg-border" />
 
-                    {/* Projects */}
+                    {/* Chats Icon */}
                     <button
                         type="button"
                         onClick={() => {
-                            if (collapsed) {
-                                setCollapsed(false);
-                            }
-
-                            setActiveTab("all");
+                            setActiveTab("chats");
+                            if (collapsed) setCollapsed(false);
                         }}
-                        className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${activeTab === "all" && !collapsed
-                            ? "bg-sidebar-accent font-semibold text-foreground"
-                            : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                            }`}
-                        title="All conversations"
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                            activeTab === "chats" && !collapsed
+                                ? "bg-sidebar-accent text-foreground font-semibold"
+                                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                        }`}
+                        title="Chats"
                     >
-                        <FolderKanban className="h-4 w-4" />
+                        <MessageSquare className="h-4 w-4" />
                     </button>
 
-                    {/* Shared */}
+                    {/* Projects Icon */}
                     <button
                         type="button"
                         onClick={() => {
-                            if (collapsed) {
-                                setCollapsed(false);
-                            }
-
-                            setActiveTab("shared");
+                            setActiveTab("all");
+                            if (collapsed) setCollapsed(false);
                         }}
-                        className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${activeTab === "shared" && !collapsed
-                            ? "bg-sidebar-accent font-semibold text-foreground"
-                            : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-                            }`}
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                            activeTab === "all" && !collapsed
+                                ? "bg-sidebar-accent text-foreground font-semibold"
+                                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                        }`}
+                        title="Projects"
+                    >
+                        <FolderOpen className="h-4 w-4" />
+                    </button>
+
+                    {/* Shared Icon */}
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setActiveTab("shared");
+                            if (collapsed) setCollapsed(false);
+                        }}
+                        className={`flex h-9 w-9 items-center justify-center rounded-lg transition-colors ${
+                            activeTab === "shared" && !collapsed
+                                ? "bg-sidebar-accent text-foreground font-semibold"
+                                : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                        }`}
                         title="Shared with me"
                     >
                         <Briefcase className="h-4 w-4" />
                     </button>
                 </div>
 
-                {/* Bottom Section */}
-                <div className="flex flex-col items-center gap-3">
-                    {/* Theme */}
+                <div className="flex flex-col items-center gap-2">
                     <button
                         type="button"
                         onClick={toggleTheme}
-                        className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
-                        title={`Current theme: ${theme}. Click to switch.`}
+                        className="flex h-9 w-9 items-center justify-center rounded-lg text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
+                        title={`Theme: ${theme}`}
                     >
                         <Palette className="h-4 w-4" />
                     </button>
-
-                    {/* Profile */}
-                    {dbUser && (
-                        <div className="scale-90">
-                            <Profile dbUser={dbUser} />
-                        </div>
-                    )}
+                    {dbUser && <div className="scale-90"><Profile dbUser={dbUser} /></div>}
                 </div>
             </div>
 
-            {/* =====================================================
-                2. EXPANDED SIDEBAR
-            ====================================================== */}
-
+            {/* ── Expanded Panel ─────────────────────────────────────────── */}
             {!collapsed && (
-                <aside className="flex h-full w-64 flex-col border-r border-border bg-sidebar text-sidebar-foreground transition-all duration-200">
+                <aside className="flex h-full w-64 flex-col border-r border-border bg-sidebar text-sidebar-foreground">
                     {/* Header */}
                     <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
-                        <Link
-                            href="/dashboard"
-                            className={`${libertinus.className} text-xl font-semibold tracking-wide text-foreground`}
-                        >
+                        <Link href="/dashboard" className={`${libertinus.className} text-xl font-semibold tracking-wide text-foreground`}>
                             Notely
                         </Link>
-
                         <button
                             type="button"
-                            onClick={() => setCreateModalOpen(true)}
-                            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground shadow-xs transition-colors hover:bg-muted"
+                            onClick={() => setCreateProjectOpen(true)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-border bg-card px-2 py-1 text-[11px] font-medium hover:bg-muted transition-colors"
                         >
-                            <Plus className="h-3 w-3" />
-                            <span>Project</span>
+                            <Plus className="h-3 w-3" /> Project
                         </button>
                     </div>
 
-                    {/* Search & Filters */}
-                    <div className="space-y-2 p-3 pb-2">
-                        {/* Search */}
+                    {/* Search & Tab Switcher */}
+                    <div className="px-3 py-2 space-y-2">
                         <div className="relative flex items-center">
                             <Search className="absolute left-2.5 h-3.5 w-3.5 text-muted-foreground" />
-
                             <input
                                 type="text"
                                 value={searchQuery}
-                                onChange={(e) =>
-                                    setSearchQuery(e.target.value)
-                                }
-                                placeholder="Search chats..."
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                placeholder="Search chats…"
                                 className="h-8 w-full rounded-lg border border-border bg-background pl-8 pr-7 text-xs text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-ring"
                             />
-
                             {searchQuery && (
-                                <button
-                                    type="button"
-                                    onClick={() => setSearchQuery("")}
-                                    className="absolute right-2 text-muted-foreground hover:text-foreground"
-                                    aria-label="Clear search"
-                                >
+                                <button type="button" onClick={() => setSearchQuery("")} className="absolute right-2 text-muted-foreground hover:text-foreground">
                                     <X className="h-3 w-3" />
                                 </button>
                             )}
                         </div>
 
-                        {/* Filter Tabs */}
-                        <div className="flex items-center gap-1 rounded-lg bg-muted/50 p-0.5">
+                        {/* Filter Tabs (Chats / Shared / All) */}
+                        <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted/60 p-0.5">
                             <button
                                 type="button"
-                                onClick={() => setActiveTab("all")}
-                                className={`flex-1 rounded-md py-1 text-center text-[11px] font-medium transition-colors ${activeTab === "all"
-                                    ? "bg-card font-semibold text-foreground shadow-xs"
-                                    : "text-muted-foreground hover:text-foreground"
-                                    }`}
+                                onClick={() => setActiveTab("chats")}
+                                className={`rounded-md py-1 text-center text-[11px] font-medium transition-colors ${
+                                    activeTab === "chats"
+                                        ? "bg-card text-foreground font-semibold shadow-xs"
+                                        : "text-muted-foreground hover:text-foreground"
+                                }`}
                             >
-                                All
+                                Chats
                             </button>
-
-                            <button
-                                type="button"
-                                onClick={() => setActiveTab("pinned")}
-                                className={`flex-1 rounded-md py-1 text-center text-[11px] font-medium transition-colors ${activeTab === "pinned"
-                                    ? "bg-card font-semibold text-foreground shadow-xs"
-                                    : "text-muted-foreground hover:text-foreground"
-                                    }`}
-                            >
-                                Pinned
-                            </button>
-
                             <button
                                 type="button"
                                 onClick={() => setActiveTab("shared")}
-                                className={`flex-1 rounded-md py-1 text-center text-[11px] font-medium transition-colors ${activeTab === "shared"
-                                    ? "bg-card font-semibold text-foreground shadow-xs"
-                                    : "text-muted-foreground hover:text-foreground"
-                                    }`}
+                                className={`rounded-md py-1 text-center text-[11px] font-medium transition-colors ${
+                                    activeTab === "shared"
+                                        ? "bg-card text-foreground font-semibold shadow-xs"
+                                        : "text-muted-foreground hover:text-foreground"
+                                }`}
                             >
                                 Shared
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab("all")}
+                                className={`rounded-md py-1 text-center text-[11px] font-medium transition-colors ${
+                                    activeTab === "all"
+                                        ? "bg-card text-foreground font-semibold shadow-xs"
+                                        : "text-muted-foreground hover:text-foreground"
+                                }`}
+                            >
+                                All
                             </button>
                         </div>
                     </div>
 
-                    {/* =================================================
-                        CONVERSATIONS LIST
-                    ================================================== */}
+                    {/* Navigation Tree */}
+                    <nav className="flex-1 overflow-y-auto px-2 pb-4 space-y-1">
 
-                    <nav className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-3">
-                        {filteredCourses.length === 0 ? (
-                            <div className="px-4 py-10 text-center">
-                                <p className="text-xs text-muted-foreground">
-                                    {searchQuery
-                                        ? "No matching conversations."
-                                        : "No courses yet in this view."}
-                                </p>
-
-                                <button
-                                    type="button"
-                                    onClick={() =>
-                                        handleInstantNewChat()
-                                    }
-                                    className="mt-3 text-xs font-medium text-foreground underline underline-offset-4 hover:opacity-80"
-                                >
-                                    Start a new chat
-                                </button>
+                        {/* ── SHARED VIEW ───────────────────────────────── */}
+                        {activeTab === "shared" ? (
+                            <div>
+                                <div className="mt-1 mb-2 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                                    Shared with me ({sharedChats.length})
+                                </div>
+                                {sharedChats.length === 0 ? (
+                                    <div className="py-8 text-center text-xs text-muted-foreground/70 px-3 space-y-1">
+                                        <p className="font-medium text-foreground">No shared chats yet</p>
+                                        <p className="text-[11px]">When someone invites you to a course, it will appear here.</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-0.5">
+                                        {sharedChats.map((chat) => (
+                                            <ChatItem
+                                                key={chat.id}
+                                                course={chat}
+                                                active={pathname === `/dashboard/${chat.id}`}
+                                                onDelete={(c) => setDeletingCourse(c)}
+                                                onRename={(c) => { setEditingCourse(c); setEditName(c.name); }}
+                                                onPin={pinCourse}
+                                            />
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                         ) : (
-                            filteredCourses.map((course) => {
-                                const active =
-                                    pathname ===
-                                    `/dashboard/${course.id}`;
+                            /* ── CHATS / ALL VIEW ────────────────────────── */
+                            <>
+                                {/* Projects */}
+                                {projects.map((project) => {
+                                    const expanded = expandedProjects.has(project.id);
+                                    const chats = projectChats[project.id] ?? [];
 
-                                return (
-                                    <div
-                                        key={course.id}
-                                        className={`group relative flex items-center rounded-lg transition-colors ${active
-                                            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
-                                            : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
-                                            }`}
-                                    >
-                                        {/* Course Link */}
-                                        <Link
-                                            href={`/dashboard/${course.id}`}
-                                            className="min-w-0 flex-1 truncate px-2.5 py-2 text-xs transition-colors"
-                                            title={course.name}
-                                        >
-                                            <div className="flex items-center justify-between gap-1.5">
-                                                <span className="truncate">
-                                                    {course.name}
-                                                </span>
+                                    return (
+                                        <div key={project.id}>
+                                            {/* Project Row */}
+                                            <div
+                                                className={`group flex items-center gap-1.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-sidebar-accent/60 ${
+                                                    activeProjectId === project.id ? "bg-sidebar-accent" : ""
+                                                }`}
+                                            >
+                                                <button
+                                                    type="button"
+                                                    onClick={() => toggleProject(project.id)}
+                                                    className="flex flex-1 items-center gap-1.5 text-left"
+                                                >
+                                                    <ChevronRight className={`h-3 w-3 text-muted-foreground/70 transition-transform ${expanded ? "rotate-90" : ""}`} />
+                                                    {expanded
+                                                        ? <FolderOpen className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                                        : <Folder className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                                                    }
+                                                    <span className="truncate text-xs font-medium text-foreground">{project.name}</span>
+                                                    {chats.length > 0 && (
+                                                        <span className="ml-auto shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">{chats.length}</span>
+                                                    )}
+                                                </button>
 
-                                                {course.pinned && (
-                                                    <Pin className="h-3 w-3 shrink-0 fill-current opacity-70" />
-                                                )}
+                                                {/* Project context menu */}
+                                                <div className="relative opacity-0 group-hover:opacity-100">
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setProjectMenuOpen((v) => v === project.id ? null : project.id)}
+                                                        className="flex h-5 w-5 items-center justify-center rounded text-muted-foreground hover:bg-card hover:text-foreground"
+                                                    >
+                                                        <MoreHorizontal className="h-3 w-3" />
+                                                    </button>
+                                                    {projectMenuOpen === project.id && (
+                                                        <div className="absolute right-0 z-40 mt-1 w-40 rounded-xl border border-border bg-popover p-1 shadow-lg text-popover-foreground animate-in fade-in-0 zoom-in-95">
+                                                            <button type="button" onClick={() => { setProjectMenuOpen(null); instantNewChat(project.id); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-muted">
+                                                                <Plus className="h-3 w-3" /> New Chat
+                                                            </button>
+                                                            <button type="button" onClick={() => { setEditingProject(project); setEditProjectName(project.name); setProjectMenuOpen(null); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-muted">
+                                                                <Pencil className="h-3 w-3" /> Rename
+                                                            </button>
+                                                            <button type="button" onClick={() => { setDeletingProject(project); setProjectMenuOpen(null); }} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-destructive hover:bg-destructive/10">
+                                                                <Trash2 className="h-3 w-3" /> Delete project
+                                                            </button>
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
-                                        </Link>
 
-                                        {/* More Menu Button */}
-                                        <button
-                                            type="button"
-                                            onClick={() =>
-                                                setOpenMenu(
-                                                    (current) =>
-                                                        current ===
-                                                            course.id
-                                                            ? null
-                                                            : course.id
-                                                )
-                                            }
-                                            className="mr-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-card hover:text-foreground"
-                                            aria-expanded={
-                                                openMenu === course.id
-                                            }
-                                            aria-label={`Course options for ${course.name}`}
-                                        >
-                                            <MoreHorizontal className="h-3.5 w-3.5" />
-                                        </button>
+                                            {/* Project Chats */}
+                                            {expanded && (
+                                                <div className="ml-6 mt-0.5 space-y-0.5">
+                                                    {chats.length === 0 ? (
+                                                        <div className="py-2 px-2 text-[11px] text-muted-foreground/60 italic">
+                                                            No chats yet.{" "}
+                                                            <button type="button" onClick={() => instantNewChat(project.id)} className="underline underline-offset-2 hover:text-foreground">Start one</button>
+                                                        </div>
+                                                    ) : (
+                                                        chats.map((chat) => (
+                                                            <ChatItem
+                                                                key={chat.id}
+                                                                course={chat}
+                                                                active={pathname === `/dashboard/${chat.id}`}
+                                                                onDelete={(c) => setDeletingCourse(c)}
+                                                                onRename={(c) => { setEditingCourse(c); setEditName(c.name); }}
+                                                                onPin={pinCourse}
+                                                            />
+                                                        ))
+                                                    )}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => instantNewChat(project.id)}
+                                                        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-[11px] text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground transition-colors"
+                                                    >
+                                                        <Plus className="h-3 w-3" /> New chat
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
 
-                                        {/* Dropdown */}
-                                        {openMenu === course.id && (
-                                            <div className="absolute right-0 top-full z-30 mt-1 w-36 rounded-xl border border-border bg-popover p-1 text-popover-foreground shadow-lg">
-                                                {/* Rename */}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setEditing(course);
-                                                        setName(
-                                                            course.name
-                                                        );
-                                                        setOpenMenu(
-                                                            null
-                                                        );
-                                                    }}
-                                                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted"
-                                                >
-                                                    <Pencil className="h-3.5 w-3.5" />
-                                                    Edit name
-                                                </button>
-
-                                                {/* Pin */}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setOpenMenu(
-                                                            null
-                                                        );
-
-                                                        updateCourse(
-                                                            course.id,
-                                                            {
-                                                                pinned: !course.pinned,
-                                                            }
-                                                        );
-                                                    }}
-                                                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors hover:bg-muted"
-                                                >
-                                                    <Pin className="h-3.5 w-3.5" />
-                                                    {course.pinned
-                                                        ? "Unpin"
-                                                        : "Pin"}
-                                                </button>
-
-                                                {/* Delete */}
-                                                <button
-                                                    type="button"
-                                                    onClick={() => {
-                                                        setOpenMenu(
-                                                            null
-                                                        );
-
-                                                        setDeletingCourse(course);
-                                                    }}
-                                                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs text-destructive transition-colors hover:bg-destructive/10"
-                                                >
-                                                    <Trash2 className="h-3.5 w-3.5" />
-                                                    Delete
-                                                </button>
-                                            </div>
-                                        )}
+                                {/* Quick / Unsorted Chats */}
+                                {quickChats.length > 0 && (
+                                    <div>
+                                        <div className="mt-3 mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/50">
+                                            Quick Chats
+                                        </div>
+                                        <div className="space-y-0.5">
+                                            {quickChats.map((chat) => (
+                                                <ChatItem
+                                                    key={chat.id}
+                                                    course={chat}
+                                                    active={pathname === `/dashboard/${chat.id}`}
+                                                    onDelete={(c) => setDeletingCourse(c)}
+                                                    onRename={(c) => { setEditingCourse(c); setEditName(c.name); }}
+                                                    onPin={pinCourse}
+                                                />
+                                            ))}
+                                        </div>
                                     </div>
-                                );
-                            })
+                                )}
+
+                                {courses.length === 0 && projects.length === 0 && (
+                                    <div className="py-8 text-center text-xs text-muted-foreground/70">
+                                        <p>No projects or chats yet.</p>
+                                        <button type="button" onClick={() => instantNewChat()} className="mt-2 underline underline-offset-2 hover:text-foreground">
+                                            Start a chat
+                                        </button>
+                                    </div>
+                                )}
+                            </>
                         )}
                     </nav>
 
-                    {/* =================================================
-                        FOOTER
-                    ================================================== */}
-
-                    <div className="flex items-center justify-between border-t border-border p-3 text-[11px] text-muted-foreground">
-                        <span>
-                            {filteredCourses.length}{" "}
-                            {filteredCourses.length === 1
-                                ? "chat"
-                                : "chats"}
-                        </span>
-
-                        <Link
-                            href="/course"
-                            className="transition-colors hover:text-foreground"
-                        >
-                            Library →
-                        </Link>
+                    {/* Footer */}
+                    <div className="border-t border-border px-4 py-2.5 text-[11px] text-muted-foreground flex items-center justify-between">
+                        <span>{projects.length} project{projects.length !== 1 ? "s" : ""} · {courses.length} chat{courses.length !== 1 ? "s" : ""}</span>
+                        <Link href="/course" className="hover:text-foreground transition-colors">Library</Link>
                     </div>
                 </aside>
             )}
 
-            {/* =========================================================
-                RENAME DIALOG
-            ========================================================== */}
+            {/* ── Dialogs ──────────────────────────────────────────────────── */}
 
-            <Dialog
-                open={Boolean(editing)}
-                onOpenChange={(open) => {
-                    if (!open) {
-                        setEditing(null);
-                        setName("");
-                    }
-                }}
-            >
-                <DialogContent>
+            {/* Delete Chat Confirmation Dialog */}
+            <Dialog open={Boolean(deletingCourse)} onOpenChange={(open) => !open && setDeletingCourse(null)}>
+                <DialogContent className="max-w-sm">
                     <DialogHeader>
-                        <DialogTitle>
-                            Rename conversation
+                        <DialogTitle className="flex items-center gap-2 text-destructive">
+                            <AlertTriangle className="h-4 w-4" /> Delete conversation
                         </DialogTitle>
-
-                        <DialogDescription>
-                            Choose a clear title for this workspace
-                            chat.
+                        <DialogDescription className="text-xs text-muted-foreground pt-1">
+                            Are you sure you want to delete <span className="font-semibold text-foreground">"{deletingCourse?.name}"</span>? This action cannot be undone.
                         </DialogDescription>
                     </DialogHeader>
-
-                    <input
-                        value={name}
-                        onChange={(event) =>
-                            setName(event.target.value)
-                        }
-                        onKeyDown={(event) => {
-                            if (event.key === "Enter") {
-                                event.preventDefault();
-                                saveName();
-                            }
-                        }}
-                        maxLength={100}
-                        autoFocus
-                        className="h-10 rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
-                    />
-
-                    <DialogFooter>
-                        <button
-                            type="button"
-                            onClick={saveName}
-                            disabled={
-                                saving || !name.trim()
-                            }
-                            className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50"
-                        >
-                            {saving ? "Saving..." : "Save"}
-                        </button>
-                    </DialogFooter>
-                </DialogContent>
-            </Dialog>
-
-            {/* =========================================================
-                DELETE CONFIRMATION DIALOG
-            ========================================================== */}
-
-            <Dialog
-                open={Boolean(deletingCourse)}
-                onOpenChange={(open) => {
-                    if (!open && !deleting) {
-                        setDeletingCourse(null);
-                    }
-                }}
-            >
-                <DialogContent>
-                    <DialogHeader>
-                        <DialogTitle>Delete conversation</DialogTitle>
-                        <DialogDescription>
-                            Are you sure you want to delete{" "}
-                            <span className="font-medium text-foreground">
-                                {deletingCourse?.name}
-                            </span>
-                            ? This cannot be undone.
-                        </DialogDescription>
-                    </DialogHeader>
-
-                    <DialogFooter className="gap-2 sm:gap-2">
+                    <DialogFooter className="gap-2 sm:gap-0 pt-2">
                         <button
                             type="button"
                             onClick={() => setDeletingCourse(null)}
-                            disabled={deleting}
-                            className="rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted disabled:opacity-50"
+                            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted"
                         >
                             Cancel
                         </button>
-
                         <button
                             type="button"
                             onClick={confirmDeleteCourse}
-                            disabled={deleting}
-                            className="rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+                            disabled={isDeleting}
+                            className="rounded-lg bg-destructive px-3.5 py-2 text-xs font-medium text-destructive-foreground hover:opacity-90 disabled:opacity-50"
                         >
-                            {deleting ? "Deleting..." : "Delete"}
+                            {isDeleting ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />Deleting…</> : "Delete"}
                         </button>
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
 
-            {/* =========================================================
-                CREATE PROJECT DIALOG
-            ========================================================== */}
-
-            <Dialog
-                open={createModalOpen}
-                onOpenChange={setCreateModalOpen}
-            >
-                <DialogContent className="max-w-md">
+            {/* Delete Project Confirmation Dialog */}
+            <Dialog open={Boolean(deletingProject)} onOpenChange={(open) => !open && setDeletingProject(null)}>
+                <DialogContent className="max-w-sm">
                     <DialogHeader>
-                        <DialogTitle>
-                            Create New Project
+                        <DialogTitle className="flex items-center gap-2 text-destructive">
+                            <AlertTriangle className="h-4 w-4" /> Delete project
                         </DialogTitle>
-
-                        <DialogDescription>
-                            Create an isolated study project workspace
-                            for your lecture notes, slides, or
-                            documents.
+                        <DialogDescription className="text-xs text-muted-foreground pt-1">
+                            Are you sure you want to delete project <span className="font-semibold text-foreground">"{deletingProject?.name}"</span> and all of its chats? This action cannot be undone.
                         </DialogDescription>
                     </DialogHeader>
+                    <DialogFooter className="gap-2 sm:gap-0 pt-2">
+                        <button
+                            type="button"
+                            onClick={() => setDeletingProject(null)}
+                            className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            type="button"
+                            onClick={confirmDeleteProject}
+                            disabled={isDeleting}
+                            className="rounded-lg bg-destructive px-3.5 py-2 text-xs font-medium text-destructive-foreground hover:opacity-90 disabled:opacity-50"
+                        >
+                            {isDeleting ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />Deleting…</> : "Delete Project"}
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
 
-                    <form
-                        onSubmit={handleCreateProjectSubmit}
-                        className="space-y-4 pt-2"
-                    >
+            {/* Rename Chat */}
+            <Dialog open={Boolean(editingCourse)} onOpenChange={(open) => !open && setEditingCourse(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Rename conversation</DialogTitle>
+                    </DialogHeader>
+                    <input
+                        value={editName}
+                        onChange={(e) => setEditName(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && renameCourse()}
+                        autoFocus maxLength={100}
+                        className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <DialogFooter>
+                        <button type="button" onClick={renameCourse} disabled={saving || !editName.trim()} className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">
+                            {saving ? "Saving…" : "Save"}
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Rename Project */}
+            <Dialog open={Boolean(editingProject)} onOpenChange={(open) => !open && setEditingProject(null)}>
+                <DialogContent>
+                    <DialogHeader>
+                        <DialogTitle>Rename project</DialogTitle>
+                    </DialogHeader>
+                    <input
+                        value={editProjectName}
+                        onChange={(e) => setEditProjectName(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && renameProject()}
+                        autoFocus maxLength={80}
+                        className="h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground outline-none focus:ring-2 focus:ring-ring"
+                    />
+                    <DialogFooter>
+                        <button type="button" onClick={renameProject} disabled={!editProjectName.trim()} className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground disabled:opacity-50">
+                            Save
+                        </button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
+
+            {/* Create Project */}
+            <Dialog open={createProjectOpen} onOpenChange={setCreateProjectOpen}>
+                <DialogContent className="max-w-sm">
+                    <DialogHeader>
+                        <DialogTitle>New Project</DialogTitle>
+                        <DialogDescription>Create a folder to organize related study chats together.</DialogDescription>
+                    </DialogHeader>
+                    <form onSubmit={createProject} className="space-y-4 pt-1">
                         <div>
-                            <label
-                                htmlFor="project-name"
-                                className="text-xs font-medium text-foreground"
-                            >
-                                Project Name
-                            </label>
-
+                            <label className="text-xs font-medium text-foreground">Project name</label>
                             <input
-                                id="project-name"
                                 type="text"
                                 value={newProjectName}
-                                onChange={(e) =>
-                                    setNewProjectName(
-                                        e.target.value
-                                    )
-                                }
-                                placeholder="e.g. Biology Midterm Preparation"
-                                autoFocus
-                                required
-                                maxLength={100}
+                                onChange={(e) => setNewProjectName(e.target.value)}
+                                placeholder="e.g. Biology Midterm"
+                                autoFocus required
                                 className="mt-1.5 h-10 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-2 focus:ring-ring"
                             />
                         </div>
-
                         <DialogFooter>
-                            <button
-                                type="button"
-                                onClick={() => {
-                                    setCreateModalOpen(false);
-                                    setNewProjectName("");
-                                }}
-                                className="rounded-lg border border-border px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-muted"
-                            >
-                                Cancel
-                            </button>
-
-                            <button
-                                type="submit"
-                                disabled={
-                                    creatingProject ||
-                                    !newProjectName.trim()
-                                }
-                                className="rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50"
-                            >
-                                {creatingProject
-                                    ? "Creating..."
-                                    : "Create Project"}
+                            <button type="button" onClick={() => setCreateProjectOpen(false)} className="rounded-lg border border-border px-3 py-2 text-xs text-muted-foreground hover:bg-muted">Cancel</button>
+                            <button type="submit" disabled={creatingProject || !newProjectName.trim()} className="rounded-lg bg-primary px-4 py-2 text-xs font-medium text-primary-foreground hover:opacity-90 disabled:opacity-50">
+                                {creatingProject ? <><Loader2 className="h-3 w-3 animate-spin inline mr-1" />Creating…</> : "Create"}
                             </button>
                         </DialogFooter>
                     </form>

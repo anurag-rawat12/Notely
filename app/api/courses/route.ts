@@ -4,18 +4,18 @@ import { getCourseIdQuery } from "@/lib/server-utils";
 
 export async function POST(request: NextRequest) {
     try {
-        const { userId, name, courseId, initialMessage, mode } = await request.json();
+        const { userId, name, courseId, projectId, initialMessage, mode } = await request.json();
 
         if (typeof userId !== "string" || !userId) {
             return NextResponse.json({ error: "userId is required." }, { status: 400 });
         }
 
-        const finalCourseId = (typeof courseId === "string" && courseId.trim()) 
-            ? courseId.trim() 
+        const finalCourseId = (typeof courseId === "string" && courseId.trim())
+            ? courseId.trim()
             : crypto.randomUUID();
 
-        const courseTitle = (typeof name === "string" && name.trim()) 
-            ? name.trim().slice(0, 100) 
+        const courseTitle = (typeof name === "string" && name.trim())
+            ? name.trim().slice(0, 100)
             : "New conversation";
 
         const now = new Date();
@@ -29,14 +29,21 @@ export async function POST(request: NextRequest) {
             });
         }
 
-        const client = await clientPromise;
-        await client.db().collection("courses").insertOne({
-            _id: finalCourseId as any,
+        const doc: Record<string, unknown> = {
+            _id: finalCourseId,
             userId,
             name: courseTitle,
             chat: { messages: initialMessages, updatedAt: now },
             createdAt: now,
-        });
+        };
+
+        // Attach to project if provided
+        if (typeof projectId === "string" && projectId.trim()) {
+            doc.projectId = projectId.trim();
+        }
+
+        const client = await clientPromise;
+        await client.db().collection("courses").insertOne(doc as any);
 
         return NextResponse.json({ courseId: finalCourseId }, { status: 201 });
     } catch (error) {

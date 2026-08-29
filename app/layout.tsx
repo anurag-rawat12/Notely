@@ -4,7 +4,7 @@ import { inter, libertinus } from "@/lib/fonts";
 import { ThemeProvider } from "@/components/theme-provider";
 
 export const metadata: Metadata = {
-  title: "Notely — AI-powered study companion",
+  title: "Notely AI powered study companion",
   description: "Turn any notes into flashcards you'll actually remember. Upload PDFs, slides, or documents and ask questions.",
 };
 

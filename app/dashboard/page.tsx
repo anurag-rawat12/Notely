@@ -8,14 +8,15 @@ import { libertinus } from "@/lib/fonts";
 import { getUser } from "@/lib/helper";
 import { DbUser } from "@/lib/Types";
 import clientPromise from "@/lib/mongodb";
-import CourseSidebar, { SidebarCourse } from "@/components/CourseSidebar";
+import CourseSidebar, { SidebarCourse, SidebarProject } from "@/components/CourseSidebar";
 import Link from "next/link";
-import { BookOpen, Clock, Users, ArrowUpRight, Sparkles, Plus } from "lucide-react";
+import { BookOpen, Clock, Users, ArrowUpRight, Sparkles, FolderOpen } from "lucide-react";
 
 type CourseDoc = {
     _id: { toString(): string };
     name: string;
     userId: string;
+    projectId?: string;
     pinned?: boolean;
     createdAt?: Date;
     chat?: {
@@ -23,6 +24,12 @@ type CourseDoc = {
         updatedAt?: Date;
     };
     collaborators?: string[];
+};
+
+type ProjectDoc = {
+    _id: { toString(): string };
+    name: string;
+    color?: string;
 };
 
 export default async function DashboardPage() {
@@ -36,6 +43,8 @@ export default async function DashboardPage() {
     const userEmail = session.user.email;
 
     const client = await clientPromise;
+    const db = client.db();
+
     const accessQuery = {
         $or: [
             { userId: auth0ID },
@@ -43,21 +52,34 @@ export default async function DashboardPage() {
         ],
     };
 
-    const courses = (await client
-        .db()
-        .collection("courses")
-        .find(accessQuery)
-        .sort({ pinned: -1, "chat.updatedAt": -1, createdAt: -1 })
-        .toArray()) as unknown as CourseDoc[];
+    // Query courses and projects concurrently
+    const [courses, projects] = await Promise.all([
+        db.collection("courses")
+            .find(accessQuery)
+            .sort({ pinned: -1, "chat.updatedAt": -1, createdAt: -1 })
+            .toArray() as unknown as Promise<CourseDoc[]>,
+
+        db.collection("projects")
+            .find({ userId: auth0ID })
+            .sort({ updatedAt: -1, createdAt: -1 })
+            .toArray() as unknown as Promise<ProjectDoc[]>,
+    ]);
 
     const time = new Date().getHours();
     const greetingTime = time < 12 ? "morning" : time < 18 ? "afternoon" : "evening";
     const firstName = dbUser?.name?.split(" ")[0] ?? "there";
 
+    const sidebarProjects: SidebarProject[] = projects.map((p) => ({
+        id: p._id.toString(),
+        name: p.name,
+        color: p.color,
+    }));
+
     const sidebarCourses: SidebarCourse[] = courses.map((course) => ({
         id: course._id.toString(),
         name: course.name,
         pinned: course.pinned,
+        projectId: course.projectId,
         isCollaborator: course.userId !== auth0ID,
         updatedAt: course.chat?.updatedAt ?? course.createdAt,
         messageCount: course.chat?.messages?.length ?? 0,
@@ -68,6 +90,7 @@ export default async function DashboardPage() {
             {/* Sidebar */}
             <CourseSidebar
                 courses={sidebarCourses}
+                projects={sidebarProjects}
                 userId={auth0ID}
                 dbUser={dbUser}
             />
@@ -114,7 +137,7 @@ export default async function DashboardPage() {
                     <div className="space-y-4 pt-2 border-t border-border">
                         <div className="flex items-center justify-between">
                             <h2 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-                                Your Courses ({courses.length})
+                                Your Conversations ({courses.length})
                             </h2>
                             {courses.length > 0 && (
                                 <span className="text-xs text-muted-foreground">Jump back into recent work</span>
@@ -127,9 +150,9 @@ export default async function DashboardPage() {
                                     <BookOpen className="h-6 w-6" />
                                 </div>
                                 <div className="space-y-1.5 max-w-sm mx-auto">
-                                    <p className="text-sm font-semibold text-foreground">No courses yet</p>
+                                    <p className="text-sm font-semibold text-foreground">No chats yet</p>
                                     <p className="text-xs text-muted-foreground leading-relaxed">
-                                        Type a question or drag & drop a PDF, Word, or PowerPoint file in the box above to start your first course.
+                                        Type a question or drag & drop a PDF, Word, or PowerPoint file in the box above to start your first chat.
                                     </p>
                                 </div>
                             </div>

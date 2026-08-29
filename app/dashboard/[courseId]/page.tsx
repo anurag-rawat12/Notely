@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { auth0 } from "@/lib/auth0";
 import clientPromise from "@/lib/mongodb";
 import ChatHistory from "@/components/ChatHistory";
-import CourseSidebar, { SidebarCourse } from "@/components/CourseSidebar";
+import CourseSidebar, { SidebarCourse, SidebarProject } from "@/components/CourseSidebar";
 import CourseHeader from "@/components/CourseHeader";
 import { getUser } from "@/lib/helper";
 import { DbUser } from "@/lib/Types";
@@ -12,6 +12,7 @@ type CourseDoc = {
     _id: { toString(): string };
     name: string;
     userId: string;
+    projectId?: string;
     pinned?: boolean;
     createdAt?: Date;
     chat?: {
@@ -20,6 +21,12 @@ type CourseDoc = {
     };
     collaborators?: string[];
     publicShareId?: string;
+};
+
+type ProjectDoc = {
+    _id: { toString(): string };
+    name: string;
+    color?: string;
 };
 
 export default async function CoursePage({ params }: { params: Promise<{ courseId: string }> }) {
@@ -43,22 +50,36 @@ export default async function CoursePage({ params }: { params: Promise<{ courseI
         ],
     };
 
-    const course = (await db.collection("courses").findOne({
-        ...getCourseIdQuery(courseId),
-        ...accessQuery,
-    } as any)) as unknown as CourseDoc | null;
+    const [course, courses, projects] = await Promise.all([
+        db.collection("courses").findOne({
+            ...getCourseIdQuery(courseId),
+            ...accessQuery,
+        } as any) as unknown as Promise<CourseDoc | null>,
+
+        db.collection("courses")
+            .find(accessQuery)
+            .sort({ pinned: -1, "chat.updatedAt": -1, createdAt: -1 })
+            .toArray() as unknown as Promise<CourseDoc[]>,
+
+        db.collection("projects")
+            .find({ userId: auth0ID })
+            .sort({ updatedAt: -1, createdAt: -1 })
+            .toArray() as unknown as Promise<ProjectDoc[]>,
+    ]);
 
     if (!course) return notFound();
 
-    const courses = (await db.collection("courses")
-        .find(accessQuery)
-        .sort({ pinned: -1, "chat.updatedAt": -1, createdAt: -1 })
-        .toArray()) as unknown as CourseDoc[];
+    const sidebarProjects: SidebarProject[] = projects.map((p) => ({
+        id: p._id.toString(),
+        name: p.name,
+        color: p.color,
+    }));
 
     const sidebarCourses: SidebarCourse[] = courses.map((item) => ({
         id: item._id.toString(),
         name: item.name,
         pinned: item.pinned,
+        projectId: item.projectId,
         isCollaborator: item.userId !== auth0ID,
         updatedAt: item.chat?.updatedAt ?? item.createdAt,
         messageCount: item.chat?.messages?.length ?? 0,
@@ -68,8 +89,10 @@ export default async function CoursePage({ params }: { params: Promise<{ courseI
         <div className="flex h-screen bg-background text-foreground overflow-hidden">
             <CourseSidebar
                 courses={sidebarCourses}
+                projects={sidebarProjects}
                 userId={auth0ID}
                 dbUser={dbUser}
+                activeProjectId={course.projectId}
             />
             <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
                 <CourseHeader

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState } from 'react';
-import { Loader, Upload, Settings } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Loader, Upload, Settings, Check } from 'lucide-react';
 import {
     Dialog,
     DialogContent,
@@ -12,7 +12,47 @@ import LogoutButton from './LogoutButton';
 import Image from 'next/image';
 import { DbUser } from '@/lib/Types';
 import { ThemeSegmentedControl } from './ThemeToggle';
+import { ACCENT_PALETTES, applyAccentColor } from './theme-provider';
 import axios from 'axios';
+
+function AccentColorControl() {
+    const [selectedAccent, setSelectedAccent] = useState("default");
+    const [mounted, setMounted] = useState(false);
+
+    useEffect(() => {
+        setMounted(true);
+        const saved = localStorage.getItem("notely-accent-color") || "default";
+        setSelectedAccent(saved);
+    }, []);
+
+    const handleSelect = (id: string) => {
+        setSelectedAccent(id);
+        applyAccentColor(id);
+    };
+
+    if (!mounted) return null;
+
+    return (
+        <div className="flex items-center gap-2 pt-1 flex-wrap">
+            {ACCENT_PALETTES.map((palette) => {
+                const active = selectedAccent === palette.id;
+                return (
+                    <button
+                        key={palette.id}
+                        type="button"
+                        onClick={() => handleSelect(palette.id)}
+                        className={`group relative flex h-7 w-7 items-center justify-center rounded-full transition-all cursor-pointer ${palette.bg} ${
+                            active ? "ring-2 ring-foreground ring-offset-2 ring-offset-card scale-110" : "hover:scale-105 opacity-80 hover:opacity-100"
+                        }`}
+                        title={palette.name}
+                    >
+                        {active && <Check className="h-3.5 w-3.5 text-white stroke-[3]" />}
+                    </button>
+                );
+            })}
+        </div>
+    );
+}
 
 const Setting_dialog = ({ dbUser }: { dbUser: DbUser }) => {
     const [avatarUrl, setAvatarUrl] = useState<string>(dbUser?.avatarUrl || "");
@@ -106,20 +146,28 @@ const Setting_dialog = ({ dbUser }: { dbUser: DbUser }) => {
                         Settings
                     </DialogTitle>
                     <p className="mt-1 text-xs text-muted-foreground">
-                        Manage your profile preferences and appearance.
+                        Manage your profile preferences, theme, and accent color.
                     </p>
                 </div>
 
                 {/* Appearance Theme Selector */}
-                <div className="space-y-2 pt-2">
+                <div className="space-y-3 pt-2">
                     <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Theme Appearance
                     </label>
                     <ThemeSegmentedControl />
                 </div>
 
+                {/* Accent Color Picker */}
+                <div className="space-y-2 pt-3 border-t border-border">
+                    <label className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Accent Color
+                    </label>
+                    <AccentColorControl />
+                </div>
+
                 {/* Profile Info */}
-                <div className="space-y-4 pt-2 border-t border-border">
+                <div className="space-y-4 pt-3 border-t border-border">
                     <h3 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
                         Profile Information
                     </h3>
