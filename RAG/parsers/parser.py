@@ -1,28 +1,35 @@
 import os
-
-os.environ["TORCHDYNAMO_DISABLE"] = "1"
-
 import json
 import time
 from pathlib import Path
 from rich import print
 
-import numpy as np
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.pipeline_options import (
-    PdfPipelineOptions,
-    AcceleratorOptions,
-    AcceleratorDevice,
-    TableFormerMode,
-    RapidOcrOptions,
-)
-from docling.datamodel.base_models import InputFormat
-from rapidocr_onnxruntime import RapidOCR
+os.environ["TORCHDYNAMO_DISABLE"] = "1"
 
-rapid_engine = RapidOCR()  # load once, reuse across all images
+_rapid_engine = None
 
 
-def build_converter() -> DocumentConverter:
+def get_rapid_engine():
+    """Lazy-load RapidOCR only when OCR is actually required to save startup RAM."""
+    global _rapid_engine
+    if _rapid_engine is None:
+        from rapidocr_onnxruntime import RapidOCR
+        _rapid_engine = RapidOCR()
+    return _rapid_engine
+
+
+def build_converter():
+    """Lazy-load Docling converter components on demand."""
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.pipeline_options import (
+        PdfPipelineOptions,
+        AcceleratorOptions,
+        AcceleratorDevice,
+        TableFormerMode,
+        RapidOcrOptions,
+    )
+    from docling.datamodel.base_models import InputFormat
+
     pipeline_options = PdfPipelineOptions()
 
     pipeline_options.do_ocr = True
@@ -35,7 +42,7 @@ def build_converter() -> DocumentConverter:
     pipeline_options.images_scale = 2.0
 
     pipeline_options.accelerator_options = AcceleratorOptions(
-        num_threads=min(4, os.cpu_count()),
+        num_threads=min(2, os.cpu_count() or 1),
         device=AcceleratorDevice.CPU,
     )
 
@@ -49,8 +56,10 @@ def build_converter() -> DocumentConverter:
 
 def ocr_image(pil_image) -> str:
     """Runs RapidOCR on a single PIL image, returns extracted text."""
+    import numpy as np
+    engine = get_rapid_engine()
     img_array = np.array(pil_image)
-    result, _ = rapid_engine(img_array)
+    result, _ = engine(img_array)
     if not result:
         return ""
     return " ".join([line[1] for line in result])
