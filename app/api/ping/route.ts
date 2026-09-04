@@ -1,64 +1,33 @@
 import { NextResponse } from "next/server";
-import clientPromise from "@/lib/mongodb";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-    const results: Record<string, { status: string; latencyMs?: number; error?: string }> = {};
-
     const fastApiUrl = (process.env.FASTAPI_URL ?? "http://localhost:8000").replace(/\/+$/, "");
-    const qdrantEndpoint = (process.env.QDRANT_ENDPOINT ?? process.env.QDRANT_URL ?? "").replace(/\/+$/, "");
-    const workerUrl = (process.env.WORKER_URL ?? "").replace(/\/+$/, "");
 
-    // 1. Ping FastAPI
     try {
         const start = Date.now();
-        const res = await fetch(`${fastApiUrl}/ping`, { cache: "no-store", signal: AbortSignal.timeout(6000) });
-        results.fastapi = { status: res.ok ? "healthy" : `status_${res.status}`, latencyMs: Date.now() - start };
-    } catch (err: any) {
-        results.fastapi = { status: "unreachable", error: err.message };
-    }
+        const res = await fetch(`${fastApiUrl}/ping`, {
+            cache: "no-store",
+            signal: AbortSignal.timeout(10000),
+        });
+        const latencyMs = Date.now() - start;
 
-    // 2. Ping Worker (optional)
-    if (workerUrl) {
-        try {
-            const start = Date.now();
-            const res = await fetch(`${workerUrl}/ping`, { cache: "no-store", signal: AbortSignal.timeout(6000) });
-            results.worker = { status: res.ok ? "healthy" : `status_${res.status}`, latencyMs: Date.now() - start };
-        } catch (err: any) {
-            results.worker = { status: "unreachable", error: err.message };
-        }
-    }
-
-    // 3. Ping Qdrant (optional)
-    if (qdrantEndpoint) {
-        try {
-            const start = Date.now();
-            const res = await fetch(`${qdrantEndpoint}/healthz`, { cache: "no-store", signal: AbortSignal.timeout(6000) });
-            results.qdrant = { status: res.ok ? "healthy" : `status_${res.status}`, latencyMs: Date.now() - start };
-        } catch (err: any) {
-            results.qdrant = { status: "unreachable", error: err.message };
-        }
-    }
-
-    // 4. Ping MongoDB
-    try {
-        const start = Date.now();
-        const client = await clientPromise;
-        await client.db().command({ ping: 1 });
-        results.mongodb = { status: "healthy", latencyMs: Date.now() - start };
-    } catch (err: any) {
-        results.mongodb = { status: "unreachable", error: err.message };
-    }
-
-    const allHealthy = Object.values(results).every((r) => r.status === "healthy");
-
-    return NextResponse.json(
-        {
-            status: allHealthy ? "ok" : "degraded",
+        return NextResponse.json({
+            status: res.ok ? "healthy" : `status_${res.status}`,
+            service: "fastapi",
+            latencyMs,
             timestamp: new Date().toISOString(),
-            services: results,
-        },
-        { status: allHealthy ? 200 : 207 }
-    );
+        });
+    } catch (err: any) {
+        return NextResponse.json(
+            {
+                status: "unreachable",
+                service: "fastapi",
+                error: err.message,
+                timestamp: new Date().toISOString(),
+            },
+            { status: 503 }
+        );
+    }
 }

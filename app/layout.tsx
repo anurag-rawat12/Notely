@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import { inter, libertinus } from "@/lib/fonts";
 import { ThemeProvider } from "@/components/theme-provider";
+import FastApiKeepAlive from "@/components/FastApiKeepAlive";
 
 export const metadata: Metadata = {
   title: "Notely AI powered study companion",
@@ -26,6 +27,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
+          <FastApiKeepAlive />
           {children}
         </ThemeProvider>
       </body>
