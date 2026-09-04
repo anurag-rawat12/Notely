@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getCourseIdQuery } from "@/lib/server-utils";
 import clientPromise from "@/lib/mongodb";
-import { chatQueue } from "@/server/Queue";
 import { auth0 } from "@/lib/auth0";
-import type { ChatJobPayload } from "@/lib/Types";
 
 export const dynamic = "force-dynamic";
+
+// Increase max duration for long AI responses (Vercel Pro/Hobby allows up to 60s)
+export const maxDuration = 60;
 
 type Mode = "chat" | "ask" | "flashcards";
 
@@ -26,6 +27,23 @@ type CourseDocument = {
 
 function error(message: string, status = 400) {
     return NextResponse.json({ error: message }, { status });
+}
+
+function extractText(content: unknown): string {
+    if (typeof content === "string") return content.trim();
+    if (Array.isArray(content)) {
+        return content
+            .map((block: unknown) => {
+                if (typeof block === "object" && block !== null) {
+                    const b = block as Record<string, unknown>;
+                    if (b.type === "text" && typeof b.text === "string") return b.text;
+                }
+                return typeof block === "string" ? block : "";
+            })
+            .join("")
+            .trim();
+    }
+    return String(content ?? "").trim();
 }
 
 export async function POST(request: NextRequest) {
@@ -56,7 +74,7 @@ export async function POST(request: NextRequest) {
         return error("A message or file is required.");
     }
 
-    const fastApiUrl = process.env.FASTAPI_URL ?? "http://localhost:8000";
+    const fastApiUrl = (process.env.FASTAPI_URL ?? "http://localhost:8000").replace(/\/+$/, "");
 
     // Authentication
     const session = await auth0.getSession();
@@ -76,7 +94,7 @@ export async function POST(request: NextRequest) {
     const isCollaborator = Boolean(userEmail && course.collaborators?.includes(userEmail));
     if (!isOwner && !isCollaborator) return error("Access denied to this course.", 403);
 
-    // ── Upload files to FastAPI (synchronous — relatively fast) ──────────
+    // ── Upload files to FastAPI ────────────────────────────────────────────
     const uploadResults: unknown[] = [];
 
     for (const file of files) {
@@ -125,31 +143,71 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ message: null, uploads: uploadResults });
     }
 
-    // ── Build history (text-only prior turns) ─────────────────────────────
+    // ── Build history ────────────────────────────────────────────────────
     const history = (course.chat?.messages ?? [])
         .filter((m) => m.content && typeof m.content === "string" && m.content.trim())
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content!.trim() }));
 
-    // ── Enqueue BullMQ job (async) — return jobId immediately ────────────
-    const job = await chatQueue.add(
-        "generate",
-        {
-            jobType: mode,
-            courseId,
-            userId,
-            message,
-            mode,
-            history,
-        } satisfies ChatJobPayload,
-        {
-            attempts: 3,
-            backoff: { type: "exponential", delay: 2000 },
+    // ── Call FastAPI directly (no BullMQ, no Redis) ───────────────────────
+    const endpoint =
+        mode === "chat" ? "/chat" : mode === "ask" ? "/ask" : "/generate-flashcards";
+
+    const body =
+        mode === "flashcards"
+            ? { query: message, user_id: userId, course_id: courseId, num_cards: 5 }
+            : mode === "ask"
+                ? { query: message, user_id: userId, course_id: courseId }
+                : { query: message, history };
+
+    let generation: Record<string, unknown>;
+    try {
+        const res = await fetch(`${fastApiUrl}${endpoint}`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+        });
+
+        if (!res.ok) {
+            const text = await res.text();
+            return error(`FastAPI ${endpoint} failed (${res.status}): ${text}`, 502);
         }
+
+        generation = (await res.json()) as Record<string, unknown>;
+    } catch {
+        return error("Could not reach the AI service. Please try again.", 502);
+    }
+
+    // ── Build assistant message ────────────────────────────────────────────
+    const responseAt = new Date();
+    const assistantMessage: Record<string, unknown> = {
+        role: "assistant",
+        type: mode === "flashcards" ? "flashcards" : mode === "ask" ? "answer" : "chat",
+        createdAt: responseAt,
+    };
+
+    if (mode === "flashcards") {
+        assistantMessage.flashcards = Array.isArray(generation.flashcards) ? generation.flashcards : [];
+    } else {
+        const rawContent =
+            generation.answer ?? generation.message ?? generation.response ?? generation.content ?? generation;
+        assistantMessage.content =
+            typeof rawContent === "string" ? rawContent : extractText(rawContent);
+        if (mode === "ask" && Array.isArray(generation.sources)) {
+            assistantMessage.sources = generation.sources;
+        }
+    }
+
+    // ── Save assistant message to MongoDB ──────────────────────────────────
+    await courses.updateOne(
+        getCourseIdQuery(courseId) as any,
+        {
+            $push: { "chat.messages": assistantMessage as any },
+            $set: { "chat.updatedAt": responseAt },
+        } as any
     );
 
     return NextResponse.json({
-        jobId: job.id,
-        status: "queued",
+        message: assistantMessage,
         uploads: uploadResults,
     });
 }

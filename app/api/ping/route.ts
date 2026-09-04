@@ -1,15 +1,14 @@
 import { NextResponse } from "next/server";
 import clientPromise from "@/lib/mongodb";
-import { connection } from "@/server/Queue";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
     const results: Record<string, { status: string; latencyMs?: number; error?: string }> = {};
 
-    const fastApiUrl = process.env.FASTAPI_URL ?? "http://localhost:8000";
-    const qdrantEndpoint = process.env.QDRANT_ENDPOINT ?? process.env.QDRANT_URL;
-    const workerUrl = process.env.WORKER_URL;
+    const fastApiUrl = (process.env.FASTAPI_URL ?? "http://localhost:8000").replace(/\/+$/, "");
+    const qdrantEndpoint = (process.env.QDRANT_ENDPOINT ?? process.env.QDRANT_URL ?? "").replace(/\/+$/, "");
+    const workerUrl = (process.env.WORKER_URL ?? "").replace(/\/+$/, "");
 
     // 1. Ping FastAPI
     try {
@@ -20,7 +19,7 @@ export async function GET() {
         results.fastapi = { status: "unreachable", error: err.message };
     }
 
-    // 2. Ping Worker
+    // 2. Ping Worker (optional)
     if (workerUrl) {
         try {
             const start = Date.now();
@@ -31,12 +30,11 @@ export async function GET() {
         }
     }
 
-    // 3. Ping Qdrant
+    // 3. Ping Qdrant (optional)
     if (qdrantEndpoint) {
         try {
-            const cleanUrl = qdrantEndpoint.replace(/\/$/, "");
             const start = Date.now();
-            const res = await fetch(`${cleanUrl}/healthz`, { cache: "no-store", signal: AbortSignal.timeout(6000) });
+            const res = await fetch(`${qdrantEndpoint}/healthz`, { cache: "no-store", signal: AbortSignal.timeout(6000) });
             results.qdrant = { status: res.ok ? "healthy" : `status_${res.status}`, latencyMs: Date.now() - start };
         } catch (err: any) {
             results.qdrant = { status: "unreachable", error: err.message };
@@ -51,15 +49,6 @@ export async function GET() {
         results.mongodb = { status: "healthy", latencyMs: Date.now() - start };
     } catch (err: any) {
         results.mongodb = { status: "unreachable", error: err.message };
-    }
-
-    // 5. Ping Redis
-    try {
-        const start = Date.now();
-        await connection.ping();
-        results.redis = { status: "healthy", latencyMs: Date.now() - start };
-    } catch (err: any) {
-        results.redis = { status: "unreachable", error: err.message };
     }
 
     const allHealthy = Object.values(results).every((r) => r.status === "healthy");

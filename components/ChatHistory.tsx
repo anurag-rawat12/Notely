@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { ChevronLeft, ChevronRight, Copy, Check, Layers, RotateCw, Loader2, Sparkles, MessageSquare, HelpCircle, Zap } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Check, Layers, RotateCw, Loader2, Sparkles, MessageSquare, HelpCircle } from "lucide-react";
 import Composer, { ComposerSubmitPayload } from "./Composer";
 import MarkdownContent from "./MarkdownContent";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -127,18 +127,14 @@ function AnimatedReveal({ children }: { children: React.ReactNode }) {
 
 // ── ThinkingBubble ─────────────────────────────────────────────────────────
 
-function ThinkingBubble({ queued }: { queued?: boolean }) {
+function ThinkingBubble() {
     return (
         <article className="flex items-center gap-2.5">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                {queued ? (
-                    <Zap className="h-3.5 w-3.5 text-primary" />
-                ) : (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
-                )}
+                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
             </div>
             <span className="text-xs text-muted-foreground">
-                {queued ? "Queued — worker will pick this up shortly…" : "Analyzing your material and generating a response…"}
+                Analyzing your material and generating a response…
             </span>
         </article>
     );
@@ -146,63 +142,16 @@ function ThinkingBubble({ queued }: { queued?: boolean }) {
 
 // ── Main ChatHistory Component ─────────────────────────────────────────────
 
-const POLL_INTERVAL = 1200;
-const MAX_POLLS = 120; // 2 minutes max
-
 export default function ChatHistory({ initialMessages, courseId, userId }: ChatHistoryProps) {
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
     const [error, setError] = useState<string | null>(null);
     const [isSending, setIsSending] = useState(false);
-    const [jobQueued, setJobQueued] = useState(false);
     const bottomRef = useRef<HTMLDivElement>(null);
     const initialTriggered = useRef(false);
-    const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const pollCountRef = useRef(0);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [messages, isSending]);
-
-    // Poll a job until it completes or fails
-    const pollJob = useCallback((jobId: string) => {
-        pollCountRef.current = 0;
-        pollRef.current = setInterval(async () => {
-            pollCountRef.current++;
-            if (pollCountRef.current > MAX_POLLS) {
-                clearInterval(pollRef.current!);
-                setIsSending(false);
-                setJobQueued(false);
-                setError("Response timed out. Please try again.");
-                return;
-            }
-
-            try {
-                const { data } = await axios.get(`/api/jobs/${jobId}`);
-                if (data.status === "completed" && data.result) {
-                    clearInterval(pollRef.current!);
-                    setIsSending(false);
-                    setJobQueued(false);
-                    setMessages((prev) => {
-                        const last = prev[prev.length - 1];
-                        if (last?.role === "assistant" && last?.content === data.result?.content) return prev;
-                        return [...prev, data.result as ChatMessage];
-                    });
-                } else if (data.status === "failed") {
-                    clearInterval(pollRef.current!);
-                    setIsSending(false);
-                    setJobQueued(false);
-                    setError(data.error ?? "Generation failed.");
-                } else if (data.status === "active") {
-                    setJobQueued(false); // show spinner instead
-                }
-            } catch {
-                // Network error — keep polling
-            }
-        }, POLL_INTERVAL);
-    }, []);
-
-    // Cleanup on unmount
-    useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current); }, []);
 
     // Handle pending generation from optimistic redirect
     useEffect(() => {
@@ -229,7 +178,6 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
         if (pendingPrompt) {
             initialTriggered.current = true;
             setIsSending(true);
-            setJobQueued(true);
             const formData = new FormData();
             formData.append("message", pendingPrompt);
             formData.append("mode", pendingMode);
@@ -238,26 +186,21 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
 
             axios.post("/api/chat", formData, { headers: { "Content-Type": "multipart/form-data" } })
                 .then(({ data }) => {
-                    if (data.jobId) {
-                        pollJob(data.jobId);
-                    } else if (data.message) {
+                    if (data.message) {
                         setMessages((prev) => [...prev, data.message]);
-                        setIsSending(false);
-                        setJobQueued(false);
                     }
+                    setIsSending(false);
                 })
                 .catch((err) => {
                     setError(axios.isAxiosError(err) ? err.response?.data?.error ?? "Unable to generate response." : "Unable to generate response.");
                     setIsSending(false);
-                    setJobQueued(false);
                 });
         }
-    }, [courseId, userId, initialMessages, pollJob]);
+    }, [courseId, userId, initialMessages]);
 
     const handleSend = async ({ message, mode, files }: ComposerSubmitPayload) => {
         setError(null);
         setIsSending(true);
-        setJobQueued(true);
         setMessages((prev) => [
             ...prev,
             { role: "user", type: mode, content: message || `Uploaded ${files.length} file${files.length === 1 ? "" : "s"}` }
@@ -273,19 +216,13 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
         try {
             const { data } = await axios.post("/api/chat", formData, { headers: { "Content-Type": "multipart/form-data" } });
 
-            if (data.jobId) {
-                // BullMQ path — poll for result
-                pollJob(data.jobId);
-            } else if (data.message) {
-                // Synchronous fallback (no worker running)
+            if (data.message) {
                 setMessages((prev) => [...prev, data.message]);
-                setIsSending(false);
-                setJobQueued(false);
             }
         } catch (err) {
             setError(axios.isAxiosError(err) ? err.response?.data?.error ?? "Unable to send your message." : "Unable to send your message.");
+        } finally {
             setIsSending(false);
-            setJobQueued(false);
         }
     };
 
@@ -360,7 +297,7 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
                         ))
                     )}
 
-                    {isSending && <ThinkingBubble queued={jobQueued} />}
+                    {isSending && <ThinkingBubble />}
 
                     <div ref={bottomRef} />
                 </div>

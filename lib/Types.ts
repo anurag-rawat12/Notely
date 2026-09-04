@@ -49,27 +49,3 @@ export interface Project {
     updatedAt: Date;
     collaborators?: string[];
 }
-
-// ─── BullMQ Job Payloads ──────────────────────────────────────────────────
-
-export interface ChatJobPayload {
-    jobType: "chat" | "ask" | "flashcards";
-    courseId: string;
-    userId: string;
-    message: string;
-    mode: "chat" | "ask" | "flashcards";
-    /** Serialised prior ChatMessage array (text-only turns) */
-    history: Array<{ role: "user" | "assistant"; content: string }>;
-}
-
-export interface DocumentJobPayload {
-    courseId: string;
-    userId: string;
-    /** Base64-encoded file bytes */
-    fileBase64: string;
-    fileName: string;
-    fileMime: string;
-    /** Message to send to the chat after the upload is processed */
-    message?: string;
-    mode?: "chat" | "ask" | "flashcards";
-}
