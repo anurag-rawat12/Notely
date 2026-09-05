@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import axios from "axios";
-import { ChevronLeft, ChevronRight, Copy, Check, Layers, RotateCw, Loader2, Sparkles, MessageSquare, HelpCircle } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Check, Layers, RotateCw, Loader2, Sparkles, MessageSquare, HelpCircle, FileText, Upload } from "lucide-react";
 import Composer, { ComposerSubmitPayload } from "./Composer";
 import MarkdownContent from "./MarkdownContent";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -15,6 +15,7 @@ interface ChatMessage {
     content?: string;
     flashcards?: Flashcard[];
     sources?: number[];
+    fileNames?: string[];
 }
 
 interface ChatHistoryProps {
@@ -125,18 +126,56 @@ function AnimatedReveal({ children }: { children: React.ReactNode }) {
     );
 }
 
-// ── ThinkingBubble ─────────────────────────────────────────────────────────
+// ── LoadingBubble ──────────────────────────────────────────────────────────
 
-function ThinkingBubble() {
+type LoadingPhase = "uploading" | "thinking" | null;
+
+function LoadingBubble({ phase }: { phase: LoadingPhase }) {
+    if (!phase) return null;
     return (
         <article className="flex items-center gap-2.5">
             <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                {phase === "uploading"
+                    ? <Upload className="h-3.5 w-3.5 animate-bounce text-primary" />
+                    : <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                }
             </div>
             <span className="text-xs text-muted-foreground">
-                Analyzing your material and generating a response…
+                {phase === "uploading"
+                    ? "Uploading and indexing your document…"
+                    : "Analyzing your material and generating a response…"
+                }
             </span>
         </article>
+    );
+}
+
+// ── UserMessageBubble ──────────────────────────────────────────────────────
+
+function UserMessageBubble({ msg }: { msg: ChatMessage }) {
+    return (
+        <div className="flex flex-col items-end gap-1.5">
+            {/* File pills */}
+            {msg.fileNames && msg.fileNames.length > 0 && (
+                <div className="flex flex-wrap justify-end gap-1.5 max-w-[82%]">
+                    {msg.fileNames.map((name, i) => (
+                        <span
+                            key={i}
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-muted/60 px-2.5 py-1 text-xs font-medium text-foreground"
+                        >
+                            <FileText className="h-3 w-3 shrink-0 text-muted-foreground" />
+                            <span className="truncate max-w-[180px]">{name}</span>
+                        </span>
+                    ))}
+                </div>
+            )}
+            {/* Message text */}
+            {msg.content && (
+                <div className="rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-xs">
+                    {msg.content}
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -145,13 +184,13 @@ function ThinkingBubble() {
 export default function ChatHistory({ initialMessages, courseId, userId }: ChatHistoryProps) {
     const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
     const [error, setError] = useState<string | null>(null);
-    const [isSending, setIsSending] = useState(false);
+    const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>(null);
     const bottomRef = useRef<HTMLDivElement>(null);
     const initialTriggered = useRef(false);
 
     useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages, isSending]);
+    }, [messages, loadingPhase]);
 
     // Handle pending generation from optimistic redirect
     useEffect(() => {
@@ -177,7 +216,7 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
 
         if (pendingPrompt) {
             initialTriggered.current = true;
-            setIsSending(true);
+            setLoadingPhase("thinking");
             const formData = new FormData();
             formData.append("message", pendingPrompt);
             formData.append("mode", pendingMode);
@@ -189,22 +228,31 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
                     if (data.message) {
                         setMessages((prev) => [...prev, data.message]);
                     }
-                    setIsSending(false);
                 })
                 .catch((err) => {
                     setError(axios.isAxiosError(err) ? err.response?.data?.error ?? "Unable to generate response." : "Unable to generate response.");
-                    setIsSending(false);
-                });
+                })
+                .finally(() => setLoadingPhase(null));
         }
     }, [courseId, userId, initialMessages]);
 
     const handleSend = async ({ message, mode, files }: ComposerSubmitPayload) => {
         setError(null);
-        setIsSending(true);
-        setMessages((prev) => [
-            ...prev,
-            { role: "user", type: mode, content: message || `Uploaded ${files.length} file${files.length === 1 ? "" : "s"}` }
-        ]);
+
+        const hasFiles = files.length > 0;
+        const fileNames = files.map((f) => f.name);
+
+        // Optimistically add the user message bubble immediately
+        const optimisticUserMsg: ChatMessage = {
+            role: "user",
+            type: mode,
+            ...(message ? { content: message } : {}),
+            ...(hasFiles ? { fileNames } : {}),
+        };
+        setMessages((prev) => [...prev, optimisticUserMsg]);
+
+        // Show the right loading phase
+        setLoadingPhase(hasFiles ? "uploading" : "thinking");
 
         const formData = new FormData();
         formData.append("message", message);
@@ -214,7 +262,14 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
         files.forEach((file) => formData.append("files", file));
 
         try {
-            const { data } = await axios.post("/api/chat", formData, { headers: { "Content-Type": "multipart/form-data" } });
+            const { data } = await axios.post("/api/chat", formData, {
+                headers: { "Content-Type": "multipart/form-data" },
+            });
+
+            // After upload completes switch to thinking phase if there's a message
+            if (hasFiles && message) {
+                setLoadingPhase("thinking");
+            }
 
             if (data.message) {
                 setMessages((prev) => [...prev, data.message]);
@@ -222,13 +277,15 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
         } catch (err) {
             setError(axios.isAxiosError(err) ? err.response?.data?.error ?? "Unable to send your message." : "Unable to send your message.");
         } finally {
-            setIsSending(false);
+            setLoadingPhase(null);
         }
     };
 
     const handleQuickPrompt = (text: string, promptMode: "chat" | "ask" | "flashcards" = "ask") => {
         handleSend({ message: text, mode: promptMode, files: [] });
     };
+
+    const isSending = loadingPhase !== null;
 
     return (
         <div className="flex h-full min-h-0 flex-col bg-background text-foreground">
@@ -268,9 +325,7 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
                         messages.map((msg, index) => (
                             <article key={index} className={`flex flex-col ${msg.role === "user" ? "items-end" : "items-start"}`}>
                                 {msg.role === "user" ? (
-                                    <div className="max-w-[82%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-sm leading-relaxed text-primary-foreground shadow-xs">
-                                        {msg.content}
-                                    </div>
+                                    <UserMessageBubble msg={msg} />
                                 ) : (
                                     <AnimatedReveal>
                                         <div className="group w-full space-y-2.5">
@@ -288,7 +343,7 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
                                                         Sources: {msg.sources.join(", ")}
                                                     </span>
                                                 )}
-                                                {msg.content && <MessageCopyButton content={msg.content} />}
+                                                {msg.content && msg.type !== "upload_confirmation" && <MessageCopyButton content={msg.content} />}
                                             </div>
                                         </div>
                                     </AnimatedReveal>
@@ -297,7 +352,7 @@ export default function ChatHistory({ initialMessages, courseId, userId }: ChatH
                         ))
                     )}
 
-                    {isSending && <ThinkingBubble />}
+                    <LoadingBubble phase={loadingPhase} />
 
                     <div ref={bottomRef} />
                 </div>

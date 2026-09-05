@@ -4,8 +4,6 @@ import clientPromise from "@/lib/mongodb";
 import { auth0 } from "@/lib/auth0";
 
 export const dynamic = "force-dynamic";
-
-// Increase max duration for long AI responses (Vercel Pro/Hobby allows up to 60s)
 export const maxDuration = 60;
 
 type Mode = "chat" | "ask" | "flashcards";
@@ -19,6 +17,7 @@ type CourseDocument = {
             role: "user" | "assistant";
             type: string;
             content?: string;
+            fileNames?: string[];
             createdAt: Date;
         }>;
         updatedAt: Date;
@@ -94,53 +93,81 @@ export async function POST(request: NextRequest) {
     const isCollaborator = Boolean(userEmail && course.collaborators?.includes(userEmail));
     if (!isOwner && !isCollaborator) return error("Access denied to this course.", 403);
 
-    // ── Upload files to FastAPI ────────────────────────────────────────────
+    // ── Upload files to FastAPI (parallel for speed) ───────────────────────
+    const fileNames = files.map((f) => f.name);
     const uploadResults: unknown[] = [];
 
-    for (const file of files) {
-        const forwardForm = new FormData();
-        forwardForm.append("file", file);
-        forwardForm.append("user_id", userId);
-        forwardForm.append("course_id", courseId);
+    if (files.length > 0) {
+        const uploadPromises = files.map(async (file) => {
+            const forwardForm = new FormData();
+            forwardForm.append("file", file);
+            forwardForm.append("user_id", userId);
+            forwardForm.append("course_id", courseId);
 
-        let uploadRes: Response;
-        try {
-            uploadRes = await fetch(`${fastApiUrl}/upload`, {
+            const uploadRes = await fetch(`${fastApiUrl}/upload`, {
                 method: "POST",
                 body: forwardForm,
             });
-        } catch {
-            return error("Could not reach the FastAPI service for upload.", 502);
-        }
 
-        if (!uploadRes.ok) {
-            return error(`Upload failed: ${await uploadRes.text()}`, 502);
+            if (!uploadRes.ok) {
+                throw new Error(`Upload of "${file.name}" failed: ${await uploadRes.text()}`);
+            }
+            return uploadRes.json();
+        });
+
+        try {
+            const results = await Promise.all(uploadPromises);
+            uploadResults.push(...results);
+        } catch (e: any) {
+            return error(e.message ?? "One or more file uploads failed.", 502);
         }
-        uploadResults.push(await uploadRes.json());
     }
 
     // ── Save user message to MongoDB ─────────────────────────────────────
     const now = new Date();
-    const messages = course.chat?.messages ?? [];
-    const lastMsg = messages[messages.length - 1];
-    const isAlreadyAdded = lastMsg && lastMsg.role === "user" && lastMsg.content === message;
+    const existingMessages = course.chat?.messages ?? [];
+    const lastMsg = existingMessages[existingMessages.length - 1];
+    const isAlreadyAdded = lastMsg && lastMsg.role === "user" && lastMsg.content === message && !files.length;
 
-    if (!isAlreadyAdded && (message || files.length > 0)) {
-        const userMessage: Record<string, unknown> = {
+    if (!isAlreadyAdded) {
+        const userDbMessage: Record<string, unknown> = {
             role: "user",
             type: mode,
             createdAt: now,
         };
-        if (message) userMessage.content = message;
+        if (message) userDbMessage.content = message;
+        if (fileNames.length > 0) userDbMessage.fileNames = fileNames;
 
         await courses.updateOne(
             getCourseIdQuery(courseId) as any,
-            { $push: { "chat.messages": userMessage as any }, $set: { "chat.updatedAt": now } } as any
+            { $push: { "chat.messages": userDbMessage as any }, $set: { "chat.updatedAt": now } } as any
         );
     }
 
+    // ── File-only upload — return upload confirmation, no AI call needed ──
     if (!message) {
-        return NextResponse.json({ message: null, uploads: uploadResults });
+        const confirmationMessage = {
+            role: "assistant",
+            type: "upload_confirmation",
+            content: fileNames.length === 1
+                ? `✅ **${fileNames[0]}** has been uploaded and indexed successfully. You can now ask questions about it.`
+                : `✅ **${fileNames.length} files** uploaded and indexed successfully:\n${fileNames.map((n) => `- ${n}`).join("\n")}\n\nYou can now ask questions about them.`,
+            createdAt: new Date(),
+        };
+
+        await courses.updateOne(
+            getCourseIdQuery(courseId) as any,
+            {
+                $push: { "chat.messages": confirmationMessage as any },
+                $set: { "chat.updatedAt": confirmationMessage.createdAt },
+            } as any
+        );
+
+        return NextResponse.json({
+            message: confirmationMessage,
+            uploads: uploadResults,
+            fileNames,
+        });
     }
 
     // ── Build history ────────────────────────────────────────────────────
@@ -148,7 +175,7 @@ export async function POST(request: NextRequest) {
         .filter((m) => m.content && typeof m.content === "string" && m.content.trim())
         .map((m) => ({ role: m.role as "user" | "assistant", content: m.content!.trim() }));
 
-    // ── Call FastAPI directly (no BullMQ, no Redis) ───────────────────────
+    // ── Call FastAPI directly ─────────────────────────────────────────────
     const endpoint =
         mode === "chat" ? "/chat" : mode === "ask" ? "/ask" : "/generate-flashcards";
 
@@ -173,7 +200,7 @@ export async function POST(request: NextRequest) {
         }
 
         generation = (await res.json()) as Record<string, unknown>;
-    } catch {
+    } catch (e: any) {
         return error("Could not reach the AI service. Please try again.", 502);
     }
 
@@ -209,5 +236,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
         message: assistantMessage,
         uploads: uploadResults,
+        fileNames,
     });
 }

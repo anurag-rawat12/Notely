@@ -10,7 +10,6 @@ export const auth0 = new Auth0Client({
             return NextResponse.redirect(
                 new URL(
                     `/error?error=${encodeURIComponent(error.message)}`,
-                    process.env.APP_BASE_URL
                 )
             );
         }
